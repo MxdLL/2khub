@@ -159,6 +159,73 @@ pcall(function()
     if nData and nData.Prices then NestPrices = nData.Prices end
 end)
 
+-- State Management (Forward Declared & Initialized Early)
+local State = {
+    -- Tab 1: Eggs & Hatching (All OFF by default)
+    AutoFlyEggs = false,
+    AutoPlaceEggs = false,
+    PlaceEggTarget = {},
+    PlaceEggRarityFilter = {},
+    MinEggWeight = "0 KG+ (ไม่จำกัด)",
+    PrioritizeHeaviestEgg = false,
+    FlySpeed = 250,
+    TargetEggs = {},
+    RarityFilter = {},
+    AutoHatch = false,
+    AutoBreakBaskets = false,
+    EggESP = false,
+    ESPMode = "All / ทั้งหมด (แสดงทุกฟอง)",
+    TargetRebirthEgg = false,
+
+    -- Tab 2: Pet Controls & Riding
+    AutoMountBest = false,
+    RideFastSpeed = false,
+    RideSpeedValue = 100,
+    AutoPlaceBestPets = false,
+    AutoCollectPets = false,
+    TargetPet = "",
+    PetCollectRadius = 25,
+    PetActionDelay = 0.5,
+
+    -- Tab 3: Silent Feeding
+    AutoFeedPets = false,
+    SelectedFood = "Grass",
+    FeedTargetPet = "All / ทั้งหมด (ป้อนทุกตัวในแปลง)",
+    FeedInterval = 1.0,
+    FeedBatchAmount = 5,
+
+    -- Tab 4: Shop & Plot Upgrades
+    AutoBuyFood = false,
+    AutoBuyGears = false,
+    SelectedGear = "Royal Radar",
+    AutoSellCollect = false,
+    AutoUpgradeAll = false,
+    AutoUpgradeLuck = false,
+    AutoUpgradeNests = false,
+    MuteScreenAlerts = true,
+
+    -- Tab 5: Warp & Servers
+    ServerHopTarget = "Lowest",
+
+    -- Tab 6: Rebirth & Stats
+    AutoRebirth = false,
+    AutoClaimIndex = false,
+    AutoClaimRewards = false,
+
+    -- Tab 7: Player & Settings
+    WalkSpeed = 16,
+    JumpPower = 180,
+    InfiniteJump = false,
+    Noclip = false,
+    ManualFly = false,
+    ManualFlySpeed = 100,
+    AntiAfk = false,
+    CurrentTheme = "2SKI Cyber Cyan (ธีมหลักทางการ - ขาว ฟ้าเรืองแสง Electric Blue)",
+    FloatingButtonVisible = true,
+    AutoLoadConfig = false,
+}
+_G.TwoSkiState = State
+
 local RarityScoreMap = { Common=1, Uncommon=2, Rare=3, Epic=4, Legendary=5, Mythic=6, Divine=7, Ethereal=8 }
 
 -- Helper Functions
@@ -854,7 +921,6 @@ local function depositBasketToBackpack()
     local basket = LocalPlayer:FindFirstChild("Basket")
     if not basket or #basket:GetChildren() == 0 then return true end
 
-    -- Check if player is already within baseplate horizontal area: DO NOT snap-warp if already there!
     local rel = baseplate.CFrame:PointToObjectSpace(hrp.Position)
     local isOnPlate = math.abs(rel.X) <= (baseplate.Size.X / 2 + 5) and math.abs(rel.Z) <= (baseplate.Size.Z / 2 + 5)
     if not isOnPlate then
@@ -862,12 +928,7 @@ local function depositBasketToBackpack()
         local targetPos = Vector3.new(baseplate.Position.X, surfaceY, baseplate.Position.Z)
         local yaw = select(2, hrp.CFrame:ToEulerAnglesYXZ())
         hrp.CFrame = CFrame.new(targetPos) * CFrame.Angles(0, yaw, 0)
-        pcall(function()
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-            hrp.RotVelocity = Vector3.zero
-        end)
-        task.wait(0.08)
+        task.wait(0.04)
     end
 
     if firetouchinterest then
@@ -880,8 +941,8 @@ local function depositBasketToBackpack()
 
     if basket and #basket:GetChildren() > 0 then
         local t0 = tick()
-        while tick() - t0 < 1.2 and #basket:GetChildren() > 0 do
-            task.wait(0.05)
+        while tick() - t0 < 0.8 and #basket:GetChildren() > 0 do
+            task.wait(0.04)
         end
     end
     return true
@@ -932,17 +993,17 @@ local function getOpenPlacementPositions(extraOccupiedSpots)
         return true
     end
 
-    -- วางไข่จากมุมขวาสุดฐาน เรียงแถวหน้ากระดานจากขวาไปซ้าย (Rightmost Corner -> Left in neat rows)
-    local surfaceY = 1.3
-    for relZ = -20, 16, 6.0 do
-        for relX = 26, -22, -6.0 do
+    -- วางไข่จากมุมขวาสุดฐาน เรียงแถวหน้ากระดานจากขวาไปซ้าย (Rightmost Corner -> Left in neat rows, surfaceY = 0.5)
+    local surfaceY = 0.5
+    for relZ = -22, 22, 5.5 do
+        for relX = 26, -26, -5.5 do
             local candidateWorldPos = bp.CFrame:PointToWorldSpace(Vector3.new(relX, surfaceY, relZ))
             if isSpotFree(candidateWorldPos) then
                 table.insert(spots, candidateWorldPos)
-                if #spots >= 30 then break end
+                if #spots >= 60 then break end
             end
         end
-        if #spots >= 30 then break end
+        if #spots >= 60 then break end
     end
 
     return spots
@@ -958,7 +1019,6 @@ local function placeEggOnPlot(eggTool, spot)
         task.wait(0.04)
     end
 
-    -- Ensure tool collision is disabled and massless so it never induces spin or physics impulse
     for _, p in ipairs(eggTool:GetDescendants()) do
         if p:IsA("BasePart") then
             pcall(function()
@@ -970,15 +1030,17 @@ local function placeEggOnPlot(eggTool, spot)
 
     if not spot then return false end
 
-    -- Move character directly above spot so server proximity check succeeds 100%
-    hrp.CFrame = CFrame.new(spot + Vector3.new(0, 3, 0))
-    pcall(function()
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        hrp.RotVelocity = Vector3.zero
-    end)
+    -- Only reposition if player is far away from their plot (zero-lag & zero velocity reset when on plot!)
+    if not isOnMyPlot() then
+        local myPlot = getMyPlot()
+        local bp = myPlot and myPlot:FindFirstChild("Baseplate")
+        if bp then
+            local surfaceY = bp.Position.Y + (bp.Size.Y / 2) + 2.5
+            hrp.CFrame = CFrame.new(Vector3.new(bp.Position.X, surfaceY, bp.Position.Z))
+            task.wait(0.05)
+        end
+    end
 
-    -- Cleanly equip tool directly without unequip deadlock
     if eggTool.Parent ~= char then
         hum:EquipTool(eggTool)
         local t0 = tick()
@@ -1002,7 +1064,7 @@ local function placeEggOnPlot(eggTool, spot)
             Remote_EggPlaced:FireServer({ PlantPosition = spot })
         end)
     end
-    task.wait(0.18)
+    task.wait(0.15)
     return true
 end
 
@@ -1031,9 +1093,15 @@ local function autoHatchPlotEggs()
                 lastPlotFullTime = 0
                 if hp and hp:IsA("ProximityPrompt") then
                     hp.Enabled = true
-                    triggerPrompt(hp, 0.05)
+                    if fireproximityprompt then
+                        pcall(function() fireproximityprompt(hp, 0) end)
+                    else
+                        triggerPrompt(hp, 0.1)
+                    end
                 end
-                Remote_Hatch:FireServer({ EggKey = key })
+                if Remote_Hatch then
+                    pcall(function() Remote_Hatch:FireServer({ EggKey = key }) end)
+                end
                 hatchedAny = true
                 task.wait(0.12)
             end
@@ -1060,8 +1128,7 @@ local function placeAllHeldEggsNow()
         local myPlot = getMyPlot()
         if not myPlot then return end
 
-        local maxNests = (myPlot:FindFirstChild("Nests") and #myPlot.Nests:GetChildren() > 0) and #myPlot.Nests:GetChildren() or 5
-        maxCapacity = math.max(maxNests * 2, 10)
+        maxCapacity = 50
         local curPlanted = #getPlotPlantedEggs()
         if curPlanted >= maxCapacity then
             lastPlotFullTime = tick()
@@ -1150,13 +1217,16 @@ local lastPetCollectNotice = 0
 local function collectAllPlotPetsNow(silent)
     local totalCollected = 0
     local myPlot = getMyPlot()
+    local targetPetName = State.TargetPet and State.TargetPet ~= "" and State.TargetPet:gsub("%s*%b[]", ""):gsub("%s*%b()", ""):gsub("^%s+", ""):gsub("%s+$", "")
     local petsFolder = myPlot and myPlot:FindFirstChild("Pets")
     if petsFolder and Remote_PickupPet then
         local pets = petsFolder:GetChildren()
         if #pets > 0 then
             for _, p in ipairs(pets) do
+                local pName = p:GetAttribute("PetName") or p.Name
+                local match = not targetPetName or (pName:lower():find(targetPetName:lower(), 1, true) ~= nil)
                 local pKey = p:GetAttribute("PetKey")
-                if pKey then
+                if pKey and match then
                     Remote_PickupPet:FireServer(pKey)
                     totalCollected = totalCollected + 1
                     task.wait(0.06)
@@ -1309,71 +1379,8 @@ local function mountBestPetNow()
     return false
 end
 
--- State Management
-local State = {
-    -- Tab 1: Eggs & Hatching (All OFF by default)
-    AutoFlyEggs = false,
-    AutoPlaceEggs = false,
-    PlaceEggTarget = {},
-    PlaceEggRarityFilter = {},
-    MinEggWeight = "0 KG+ (ไม่จำกัด)",
-    PrioritizeHeaviestEgg = false,
-    FlySpeed = 250,
-    TargetEggs = {},
-    RarityFilter = {},
-    AutoHatch = false,
-    AutoBreakBaskets = false,
-    EggESP = false,
-    ESPMode = "All / ทั้งหมด (แสดงทุกฟอง)",
-    TargetRebirthEgg = false,
-
-    -- Tab 2: Pet Controls & Riding
-    AutoMountBest = false,
-    RideFastSpeed = false,
-    RideSpeedValue = 100,
-    AutoPlaceBestPets = false,
-    AutoCollectPets = false,
-    TargetPet = "",
-    PetCollectRadius = 25,
-    PetActionDelay = 0.5,
-
-    -- Tab 3: Silent Feeding
-    AutoFeedPets = false,
-    SelectedFood = "Grass",
-    FeedTargetPet = "All / ทั้งหมด (ป้อนทุกตัวในแปลง)",
-    FeedInterval = 1.0,
-    FeedBatchAmount = 5,
-
-    -- Tab 4: Shop & Plot Upgrades
-    AutoBuyFood = false,
-    AutoBuyGears = false,
-    SelectedGear = "Royal Radar",
-    AutoSellCollect = false,
-    AutoUpgradeAll = false,
-    AutoUpgradeLuck = false,
-    AutoUpgradeNests = false,
-    MuteScreenAlerts = true,
-
-    -- Tab 5: Warp & Servers
-    ServerHopTarget = "Lowest",
-
-    -- Tab 6: Rebirth & Stats
-    AutoRebirth = false,
-    AutoClaimIndex = false,
-    AutoClaimRewards = false,
-
-    -- Tab 7: Player & Settings
-    WalkSpeed = 16,
-    JumpPower = 130,
-    InfiniteJump = false,
-    Noclip = false,
-    ManualFly = false,
-    ManualFlySpeed = 100,
-    AntiAfk = false,
-    CurrentTheme = "2SKI Cyber Cyan (ธีมหลักทางการ - ขาว ฟ้าเรืองแสง Electric Blue)",
-    FloatingButtonVisible = true,
-    AutoLoadConfig = false,
-}
+-- State already defined above
+_G.TwoSkiState = State
 
 local Connections = {}
 local UIControls = {}
@@ -2906,11 +2913,14 @@ UIControls.FeedTargetPet = TabFood:Dropdown({
 TabFood:Button({
     Title = "รีเฟรชรายชื่อสัตว์ในแปลง (Refresh Pet List)",
     Callback = function()
+        local list = getFeedPetTargetList()
         if UIControls.FeedTargetPet then
             if UIControls.FeedTargetPet.Refresh then pcall(function() UIControls.FeedTargetPet:Refresh(list) end)
             elseif UIControls.FeedTargetPet.SetValues then pcall(function() UIControls.FeedTargetPet:SetValues(list) end) end
         end
-        if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = "รีเฟรชรายชื่อสัตว์เลี้ยงเรียบร้อย (" .. tostring(#list) .. " ตัวเลือก)" }) end
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            pcall(function() WindUI:Notify({ Title = "2SKI", Content = "รีเฟรชรายชื่อสัตว์เลี้ยงเรียบร้อย (" .. tostring(#list) .. " ตัวเลือก)" }) end)
+        end
     end
 })
 
@@ -3072,7 +3082,7 @@ TabShop:Button({
 local CachedServers = {}
 
 local function queueScriptOnTeleport()
-    local qot = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+    local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if qot then
         pcall(function()
             qot('loadstring(game:HttpGet("https://raw.githubusercontent.com/MxdLL/2SKI/main/2ski_ride_a_pet_protected.lua?t=" .. tick()))()')
@@ -3133,14 +3143,7 @@ local function fetchServerList()
     return labels
 end
 
-local function queueScriptOnTeleport()
-    local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
-    if qot then
-        pcall(function()
-            qot('loadstring(game:HttpGet("https://raw.githubusercontent.com/MxdLL/2khub/main/main.lua?t=" .. tick()))()')
-        end)
-    end
-end
+-- Unified queueScriptOnTeleport above
 
 local function performServerHop(targetServerId)
     queueScriptOnTeleport()
@@ -3259,8 +3262,16 @@ TabTP:Button({
             local base = myPlot:FindFirstChild("Baseplate")
             if base then
                 hrp.CFrame = base.CFrame + Vector3.new(0, 4, 0)
-                if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = "วาร์ปมายังแปลงส่วนตัวแล้ว!" }) end
+                if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+                    pcall(function() WindUI:Notify({ Title = "2SKI", Content = "วาร์ปมายังแปลงส่วนตัวแล้ว!" }) end)
+                end
                 return
+            end
+        end
+        if Remote_TeleportToPlot then
+            pcall(function() Remote_TeleportToPlot:FireServer() end)
+            if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+                pcall(function() WindUI:Notify({ Title = "2SKI", Content = "เรียกใช้งาน TeleportToPlot สำเร็จ!" }) end)
             end
         end
     end
@@ -3431,18 +3442,20 @@ UIControls.InfiniteJump = TabSettings:Toggle({
 })
 
 local function hookHumanoidJump(hum)
-    if not hum then return end
+    if not hum or hum._TwoSkiJumpHooked then return end
+    hum._TwoSkiJumpHooked = true
     pcall(function()
         hum.UseJumpPower = true
-        local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 160
+        local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 180
         hum.JumpPower = jp
+        local grav = (workspace.Gravity and workspace.Gravity > 0) and workspace.Gravity or 250
+        hum.JumpHeight = (jp * jp) / (2 * grav)
         hum.StateChanged:Connect(function(oldState, newState)
             if newState == Enum.HumanoidStateType.Jumping then
                 local _, hrp = getCharHrp()
                 if hrp then
-                    local curY = hrp.AssemblyLinearVelocity.Y
-                    local targetJp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 160
-                    if curY < (targetJp * 0.75) then
+                    local targetJp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 180
+                    if hrp.AssemblyLinearVelocity.Y < (targetJp * 0.85) then
                         hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, targetJp, hrp.AssemblyLinearVelocity.Z)
                     end
                 end
@@ -3464,7 +3477,7 @@ do
             if hrp and hum and hum.Health > 0 then
                 lastJumpTick = now
                 hum:ChangeState(Enum.HumanoidStateType.Jumping)
-                local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 160
+                local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 180
                 hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
             end
         end
@@ -3743,12 +3756,16 @@ task.spawn(function()
             if targetSpeed and math.abs(hum.WalkSpeed - targetSpeed) > 0.5 then
                 pcall(function() hum.WalkSpeed = targetSpeed end)
             end
-            local jp = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or 130
+            local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 180
             if not hum.UseJumpPower then
                 pcall(function() hum.UseJumpPower = true end)
             end
             if math.abs(hum.JumpPower - jp) > 1 then
-                pcall(function() hum.JumpPower = jp end)
+                pcall(function()
+                    hum.JumpPower = jp
+                    local grav = (workspace.Gravity and workspace.Gravity > 0) and workspace.Gravity or 250
+                    hum.JumpHeight = (jp * jp) / (2 * grav)
+                end)
             end
         end
         task.wait(targetSpeed and 0.25 or 0.5)
@@ -3934,7 +3951,7 @@ end)
 -- Loop 4: Auto Sell & Collect + Auto Buy Food / Gears + Rewards
 task.spawn(function()
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
-        if not (State.AutoSellCollect or State.AutoBuyFood or State.AutoBuyGears or State.AutoClaimRewards or State.AutoClaimIndex or State.AutoRebirth) then
+        if not (State.AutoSellCollect or State.AutoBuyFood or State.AutoBuyGears or State.AutoClaimRewards or State.AutoClaimIndex or State.AutoRebirth or State.AutoBreakBaskets) then
             task.wait(2.0)
             continue
         end
@@ -3978,6 +3995,15 @@ task.spawn(function()
                 local canRb, msg = canDoRebirth()
                 if canRb then
                     Remote_Rebirth:FireServer()
+                end
+            end)
+        end
+
+        if State.AutoBreakBaskets then
+            pcall(function()
+                local basket = LocalPlayer:FindFirstChild("Basket")
+                if basket and #basket:GetChildren() > 0 then
+                    depositBasketToBackpack()
                 end
             end)
         end
