@@ -1441,7 +1441,8 @@ local function updateManualFly()
             if oldBv then oldBv:Destroy() end
             manualFlyBv = Instance.new("BodyVelocity")
             manualFlyBv.Name = "TwoSkiManualFlyBV"
-            manualFlyBv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+            manualFlyBv.MaxForce = Vector3.new(2e6, 2e6, 2e6)
+            manualFlyBv.P = 1e5
             manualFlyBv.Velocity = Vector3.zero
             manualFlyBv.Parent = hrp
         end
@@ -1451,8 +1452,10 @@ local function updateManualFly()
             if oldBg then oldBg:Destroy() end
             manualFlyBg = Instance.new("BodyGyro")
             manualFlyBg.Name = "TwoSkiManualFlyBG"
-            manualFlyBg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-            manualFlyBg.P = 10000
+            -- PURE YAW ONLY: Locking pitch/roll torque to 0 completely eliminates Humanoid upright spring vibration & twitching!
+            manualFlyBg.MaxTorque = Vector3.new(0, 4e6, 0)
+            manualFlyBg.P = 4000
+            manualFlyBg.D = 400
             manualFlyBg.CFrame = hrp.CFrame
             manualFlyBg.Parent = hrp
         end
@@ -1461,7 +1464,8 @@ local function updateManualFly()
         updateNoclipConnection()
 
         if not manualFlyCon then
-            manualFlyCon = RunService.RenderStepped:Connect(function()
+            local flyCurrentVel = Vector3.zero
+            manualFlyCon = RunService.RenderStepped:Connect(function(dt)
                 if not State.ManualFly then
                     if manualFlyCon then manualFlyCon:Disconnect(); manualFlyCon = nil end
                     return
@@ -1473,31 +1477,51 @@ local function updateManualFly()
 
                 local cam = workspace.CurrentCamera
                 local camCF = cam and cam.CFrame or h.CFrame
-                local moveDir = hm.MoveDirection
                 local speed = State.ManualFlySpeed or 100
-                local vel = Vector3.zero
 
-                if moveDir.Magnitude > 0 then
-                    local rel = camCF:VectorToObjectSpace(moveDir)
-                    vel = (camCF.LookVector * (-rel.Z) + camCF.RightVector * rel.X) * speed
+                local dir = Vector3.zero
+                if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                    dir = dir + camCF.LookVector
                 end
-
-                local vY = 0
+                if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                    dir = dir - camCF.LookVector
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                    dir = dir - camCF.RightVector
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                    dir = dir + camCF.RightVector
+                end
                 if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                    vY = vY + 1
+                    dir = dir + Vector3.new(0, 1, 0)
                 end
                 if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-                    vY = vY - 1
-                end
-                if vY ~= 0 then
-                    vel = vel + Vector3.new(0, vY * speed * 0.85, 0)
+                    dir = dir - Vector3.new(0, 1, 0)
                 end
 
+                -- Mobile touch input support
+                if dir.Magnitude == 0 and hm.MoveDirection.Magnitude > 0 then
+                    local rel = camCF:VectorToObjectSpace(hm.MoveDirection)
+                    dir = (camCF.LookVector * (-rel.Z) + camCF.RightVector * rel.X)
+                end
+
+                local targetVel = Vector3.zero
+                if dir.Magnitude > 0.05 then
+                    targetVel = dir.Unit * speed
+                end
+
+                -- Silky smooth responsive Lerp (Zero sudden jerk, instant stop)
+                flyCurrentVel = flyCurrentVel:Lerp(targetVel, math.clamp(dt * 18, 0.15, 1.0))
+
                 if manualFlyBv and manualFlyBv.Parent == h then
-                    manualFlyBv.Velocity = vel
+                    manualFlyBv.Velocity = flyCurrentVel
                 end
                 if manualFlyBg and manualFlyBg.Parent == h then
-                    manualFlyBg.CFrame = camCF
+                    local look = camCF.LookVector
+                    local flatLook = Vector3.new(look.X, 0, look.Z)
+                    if flatLook.Magnitude > 0.001 then
+                        manualFlyBg.CFrame = CFrame.lookAt(h.Position, h.Position + flatLook.Unit)
+                    end
                 end
             end)
             table.insert(Connections, manualFlyCon)
