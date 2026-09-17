@@ -1348,7 +1348,7 @@ local State = {
 
     -- Tab 7: Player & Settings
     WalkSpeed = 16,
-    JumpPower = 50,
+    JumpPower = 100,
     InfiniteJump = false,
     Noclip = false,
     ManualFly = false,
@@ -3413,12 +3413,30 @@ local infJumpCon = UserInputService.JumpRequest:Connect(function()
         local _, hrp, hum = getCharHrp()
         if hrp and hum and hum.Health > 0 then
             lastInfJumpTick = now
-            local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 50)
-            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 45, 300), hrp.AssemblyLinearVelocity.Z)
+            local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 100)
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 70, 350), hrp.AssemblyLinearVelocity.Z)
         end
     end
 end)
 table.insert(Connections, infJumpCon)
+
+-- Snappy Athletic Jump & Descent Controller (Eliminates floaty slow-mo & sticking)
+local fastFallCon = RunService.Heartbeat:Connect(function(dt)
+    if not _G.TwoSkiRunning or _G.TwoSkiActiveToken ~= myToken then return end
+    if State.ManualFly then return end
+    local _, hrp, hum = getCharHrp()
+    if hrp and hum and hum.Health > 0 then
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Freefall and hrp.AssemblyLinearVelocity.Y < -2 then
+            local currentVy = hrp.AssemblyLinearVelocity.Y
+            if currentVy > -180 then
+                hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, currentVy - (dt * 120), hrp.AssemblyLinearVelocity.Z)
+            end
+        end
+    end
+end)
+table.insert(Connections, fastFallCon)
 
 UIControls.Noclip = TabSettings:Toggle({
     Title = "เดินทะลุกำแพง & ทะลุภูเขา (Noclip All)",
@@ -3690,12 +3708,13 @@ task.spawn(function()
             if targetSpeed and hum.WalkSpeed ~= targetSpeed then
                 pcall(function() hum.WalkSpeed = targetSpeed end)
             end
-            -- Maintain crisp high jump continuously (Always enforce UseJumpPower)
+            -- Maintain crisp high jump continuously (Always enforce UseJumpPower and exact matching JumpHeight)
             pcall(function()
-                local jp = State.JumpPower or 50
+                local jp = State.JumpPower or 100
+                local g = (workspace.Gravity and workspace.Gravity > 0) and workspace.Gravity or 250
                 hum.UseJumpPower = true
                 hum.JumpPower = jp
-                hum.JumpHeight = jp * 0.15
+                hum.JumpHeight = (jp ^ 2) / (2 * g)
             end)
         end
         task.wait(targetSpeed and 0.25 or 0.4)
