@@ -488,7 +488,7 @@ local function getServerEggsList()
         return a < b
     end)
 
-    local list = {}
+    local list = {"All / ทั้งหมด (เลือกตามกิโล หรือเก็บทุกชนิด)"}
     for _, name in ipairs(sorted) do
         local _, rarity = getEggScore(name)
         table.insert(list, name .. " [" .. rarity .. "]")
@@ -536,7 +536,7 @@ local function getActiveEggInfo(eggModel)
     if not activeFolder then return nil, 1, 15 end
 
     local bestMatch = nil
-    local bestDist = 30.0
+    local bestDist = 25.0
     for _, ae in ipairs(activeFolder:GetChildren()) do
         local posAttr = ae:GetAttribute("Position")
         local pVec = posAttr
@@ -547,9 +547,10 @@ local function getActiveEggInfo(eggModel)
             end
         end
         if typeof(pVec) == "Vector3" then
-            local d = (pVec - eggPos).Magnitude
-            if d < bestDist then
-                bestDist = d
+            local horizDist = (Vector3.new(pVec.X, 0, pVec.Z) - Vector3.new(eggPos.X, 0, eggPos.Z)).Magnitude
+            local vertDist = math.abs(pVec.Y - eggPos.Y)
+            if horizDist < 15.0 and vertDist < 45.0 and horizDist < bestDist then
+                bestDist = horizDist
                 bestMatch = ae
             end
         end
@@ -1129,17 +1130,21 @@ local function placeAllHeldEggsNow()
     return totalPlaced > 0
 end
 
-local function collectAllPlotPetsNow()
+local lastPetCollectNotice = 0
+local function collectAllPlotPetsNow(silent)
     local totalCollected = 0
     local myPlot = getMyPlot()
     local petsFolder = myPlot and myPlot:FindFirstChild("Pets")
     if petsFolder and Remote_PickupPet then
-        for _, p in ipairs(petsFolder:GetChildren()) do
-            local pKey = p:GetAttribute("PetKey")
-            if pKey then
-                Remote_PickupPet:FireServer(pKey)
-                totalCollected = totalCollected + 1
-                task.wait(0.08)
+        local pets = petsFolder:GetChildren()
+        if #pets > 0 then
+            for _, p in ipairs(pets) do
+                local pKey = p:GetAttribute("PetKey")
+                if pKey then
+                    Remote_PickupPet:FireServer(pKey)
+                    totalCollected = totalCollected + 1
+                    task.wait(0.06)
+                end
             end
         end
     end
@@ -1149,12 +1154,21 @@ local function collectAllPlotPetsNow()
             if pet.OwnerUserId == LocalPlayer.UserId and pet.PetKey then
                 Remote_PickupPet:FireServer(pet.PetKey)
                 totalCollected = totalCollected + 1
-                task.wait(0.08)
+                task.wait(0.06)
             end
         end
     end
-    if _G.TwoSkiLoaded then
-        WindUI:Notify({ Title = "2SKI", Content = "เก็บสัตว์เลี้ยงทั้งหมดในฐานลงกระเป๋าแล้ว (" .. tostring(totalCollected) .. " ตัว)" })
+
+    if not silent and _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+        local now = tick()
+        if now - lastPetCollectNotice > 2.0 then
+            lastPetCollectNotice = now
+            if totalCollected > 0 then
+                WindUI:Notify({ Title = "2SKI", Content = "เก็บสัตว์เลี้ยงทั้งหมดในฐานลงกระเป๋าแล้ว (" .. tostring(totalCollected) .. " ตัว)" })
+            else
+                WindUI:Notify({ Title = "2SKI", Content = "ไม่พบสัตว์เลี้ยงในฐานให้เก็บ" })
+            end
+        end
     end
     return totalCollected
 end
@@ -1403,9 +1417,14 @@ local function updateNoclipConnection()
         end
         local char = LocalPlayer.Character
         if char then
-            for _, p in ipairs(char:GetChildren()) do
-                if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
-                    p.CanCollide = true
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    local n = p.Name
+                    if n == "HumanoidRootPart" or n == "UpperTorso" or n == "LowerTorso" or n == "Torso" then
+                        p.CanCollide = true
+                    else
+                        p.CanCollide = false
+                    end
                 end
             end
         end
@@ -2264,13 +2283,40 @@ local function isEggMatching(egg)
         end
     end
 
-    -- 1. Check User Explicit Target Selection FIRST! (Always Prioritized)
+    local function isAllSelection(str)
+        if not str then return false end
+        local s = string.lower(tostring(str))
+        return s:find("all", 1, true) ~= nil or s:find("ทั้งหมด", 1, true) ~= nil
+    end
+
+    -- 1. Min Egg Weight Filter (กิโลไข่ที่จะเก็บ) - Enforced First!
+    local minKGStr = State.MinEggWeight or "0 KG+ (ไม่จำกัด)"
+    if not isAllSelection(minKGStr) and not minKGStr:find("0 KG") then
+        local targetMin = 0
+        if minKGStr:find("240,000") or minKGStr:find("240000") then targetMin = 240000
+        elseif minKGStr:find("100,000") or minKGStr:find("100000") then targetMin = 100000
+        elseif minKGStr:find("50,000") or minKGStr:find("50000") then targetMin = 50000
+        elseif minKGStr:find("10,000") or minKGStr:find("10000") then targetMin = 10000
+        elseif minKGStr:find("1,500") or minKGStr:find("1500") then targetMin = 1500
+        elseif minKGStr:find("100") then targetMin = 100
+        elseif minKGStr:find("15") then targetMin = 15
+        end
+
+        if targetMin > 0 then
+            local _, realW, shownKG = getActiveEggInfo(egg)
+            local numShown = tonumber(tostring(shownKG):gsub("[^0-9.]", "")) or tonumber(realW) or 0
+            if numShown < targetMin then
+                return false
+            end
+        end
+    end
+
+    -- 2. Check User Explicit Target Selection (Always Prioritized when specified)
     local targets = normalizeMultiSelection(State.TargetEggs)
     local hasSpecificTargets = false
     if #targets > 0 then
         for _, t in ipairs(targets) do
-            local cleanT = string.lower(t:gsub("%s*%b[]", ""):gsub("%s*%b()", ""):gsub("^%s+", ""):gsub("%s+$", ""))
-            if cleanT ~= "all" and cleanT ~= "ทั้งหมด" and #cleanT > 0 then
+            if not isAllSelection(t) and #t:gsub("%s+", "") > 0 then
                 hasSpecificTargets = true
                 break
             end
@@ -2278,14 +2324,14 @@ local function isEggMatching(egg)
     end
 
     if hasSpecificTargets then
-        -- User explicitly chose eggs in dropdown: MUST match user selection!
+        -- User explicitly chose specific eggs in dropdown: MUST match user selection!
         local typeMatch = false
         for _, t in ipairs(targets) do
-            local cleanT = string.lower(t:gsub("%s*%b[]", ""):gsub("%s*%b()", ""):gsub("^%s+", ""):gsub("%s+$", ""))
-            if cleanT == "all" or cleanT == "ทั้งหมด" then
+            if isAllSelection(t) then
                 typeMatch = true
                 break
             end
+            local cleanT = string.lower(t:gsub("%s*%b[]", ""):gsub("%s*%b()", ""):gsub("egg", ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
             for _, cName in ipairs(candidateNames) do
                 local cleanC = cName:gsub("egg", ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
                 if cName == cleanT or cleanC == cleanT or cName:find(cleanT, 1, true) or cleanT:find(cleanC, 1, true) then
@@ -2313,11 +2359,11 @@ local function isEggMatching(egg)
         end
     end
 
-    -- 2. Rarity Filter
+    -- 3. Rarity Filter
     local rarities = normalizeMultiSelection(State.RarityFilter)
     local allRarities = (#rarities == 0)
     for _, r in ipairs(rarities or {}) do
-        if r == "All Rarities" or r:find("All", 1, true) or r:find("ทั้งหมด", 1, true) then
+        if isAllSelection(r) or r == "All Rarities" then
             allRarities = true
             break
         end
@@ -2344,26 +2390,6 @@ local function isEggMatching(egg)
                 end
             end
             if not rarityMatched then return false end
-        end
-    end
-
-    -- 3. Min Egg Weight Filter (กิโลไข่ที่จะเก็บ) - Type-Safe String to Number Extraction
-    local minKGStr = State.MinEggWeight or "0 KG+ (ไม่จำกัด)"
-    if minKGStr ~= "0 KG+ (ไม่จำกัด)" and minKGStr ~= "All / ทั้งหมด (0 KG+)" and not minKGStr:find("0 KG") and not minKGStr:find("All") and not minKGStr:find("ทั้งหมด") then
-        local _, realW, shownKG = getActiveEggInfo(egg)
-        local targetMin = 0
-        if minKGStr:find("240,000") or minKGStr:find("240000") then targetMin = 240000
-        elseif minKGStr:find("100,000") or minKGStr:find("100000") then targetMin = 100000
-        elseif minKGStr:find("50,000") or minKGStr:find("50000") then targetMin = 50000
-        elseif minKGStr:find("10,000") or minKGStr:find("10000") then targetMin = 10000
-        elseif minKGStr:find("1,500") or minKGStr:find("1500") then targetMin = 1500
-        elseif minKGStr:find("100") then targetMin = 100
-        elseif minKGStr:find("15") then targetMin = 15
-        end
-
-        local numShown = tonumber(tostring(shownKG):gsub("[^0-9.]", "")) or tonumber(realW) or 0
-        if numShown < targetMin then
-            return false
         end
     end
 
@@ -2798,16 +2824,16 @@ UIControls.AutoCollectPets = TabPet:Toggle({
     Callback = function(val)
         State.AutoCollectPets = val
         if val then
-            task.spawn(collectAllPlotPetsNow)
+            task.spawn(function() collectAllPlotPetsNow(true) end)
         end
-        if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = val and "เริ่มเก็บสัตว์เลี้ยงทั้งหมดในฐานลงกระเป๋า" or "หยุดเก็บสัตว์เลี้ยง" }) end
+        if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = val and "เปิดระบบเก็บสัตว์เลี้ยงในฐานอัตโนมัติ" or "ปิดระบบเก็บสัตว์เลี้ยง" }) end
     end
 })
 
 TabPet:Button({
     Title = "เก็บสัตว์เลี้ยงทั้งหมดในฐานทันที (Collect All Plot Pets Now)",
     Callback = function()
-        collectAllPlotPetsNow()
+        collectAllPlotPetsNow(false)
     end
 })
 
@@ -3379,10 +3405,17 @@ UIControls.InfiniteJump = TabSettings:Toggle({
     Callback = function(val) State.InfiniteJump = val end
 })
 
+local lastInfJumpTick = 0
 local infJumpCon = UserInputService.JumpRequest:Connect(function()
     if State.InfiniteJump then
-        local _, _, hum = getCharHrp()
-        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+        local now = tick()
+        if now - lastInfJumpTick < 0.16 then return end
+        local _, hrp, hum = getCharHrp()
+        if hrp and hum and hum.Health > 0 then
+            lastInfJumpTick = now
+            local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 50)
+            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 45, 300), hrp.AssemblyLinearVelocity.Z)
+        end
     end
 end)
 table.insert(Connections, infJumpCon)
@@ -3911,9 +3944,9 @@ task.spawn(function()
             pcall(mountBestPetNow)
         end
 
-        -- Auto Collect All Base Pets
+        -- Auto Collect All Base Pets (Silent in background)
         if State.AutoCollectPets then
-            pcall(collectAllPlotPetsNow)
+            pcall(function() collectAllPlotPetsNow(true) end)
         end
 
         if State.AutoPlaceBestPets and Remote_PlacePet then
@@ -4044,12 +4077,13 @@ task.spawn(function()
             continue
         end
 
-        -- Always fly to the best candidate: Heaviest first if enabled, otherwise closest distance!
-        if State.PrioritizeHeaviestEgg then
+        -- Always fly to the best candidate: Heaviest first if enabled or if MinEggWeight is set, otherwise closest distance!
+        local shouldSortByWeight = State.PrioritizeHeaviestEgg or (State.MinEggWeight and State.MinEggWeight ~= "0 KG+ (ไม่จำกัด)" and not State.MinEggWeight:find("0 KG"))
+        if shouldSortByWeight then
             table.sort(candidates, function(a, b)
-                local wA = tonumber(a.weight) or 1
-                local wB = tonumber(b.weight) or 1
-                if math.abs(wA - wB) > 0.04 then
+                local wA = tonumber(a.shownKG) or tonumber(a.weight) or 1
+                local wB = tonumber(b.shownKG) or tonumber(b.weight) or 1
+                if math.abs(wA - wB) > 0.5 then
                     return wA > wB
                 end
                 return a.dist < b.dist
