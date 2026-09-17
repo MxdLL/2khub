@@ -600,18 +600,13 @@ local function releaseFlightHold()
         pcall(function() activeFlightBv:Destroy() end)
         activeFlightBv = nil
     end
-    local _, hrp, hum = getCharHrp()
+    local _, hrp = getCharHrp()
     if hrp then
         pcall(function()
             local old1 = hrp:FindFirstChild("TwoSkiFlightHold")
             if old1 then old1:Destroy() end
             local old2 = hrp:FindFirstChild("TwoSkiFlightGyro")
             if old2 then old2:Destroy() end
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-            hrp.RotVelocity = Vector3.zero
-            local yaw = select(2, hrp.CFrame:ToEulerAnglesYXZ())
-            hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, yaw, 0)
         end)
     end
 end
@@ -913,12 +908,8 @@ local function getOpenPlacementPositions(extraOccupiedSpots)
     local plantedEggs = getPlotPlantedEggs()
     local spots = {}
 
-    local posY = bp.Position.Y + (bp.Size.Y / 2) + 0.5
-    local center = Vector3.new(bp.Position.X, posY, bp.Position.Z)
-    local safeRadius = 22 -- Inner safe verified legal planting zone (avoids outer fence/border rejections)
-
-    local function isSpotFree(pos)
-        local posFlat = Vector3.new(pos.X, 0, pos.Z)
+    local function isSpotFree(worldPos)
+        local posFlat = Vector3.new(worldPos.X, 0, worldPos.Z)
         for _, egg in ipairs(plantedEggs) do
             local pPart = egg:FindFirstChildWhichIsA("BasePart") or egg.PrimaryPart
             local pPos = pPart and pPart.Position or egg:GetPivot().Position
@@ -941,25 +932,16 @@ local function getOpenPlacementPositions(extraOccupiedSpots)
         return true
     end
 
-    local step = 4.5
-    local rawSpots = {}
-    for stepX = -safeRadius, safeRadius, step do
-        for stepZ = -safeRadius, safeRadius, step do
-            local candidatePos = center + Vector3.new(stepX, 0, stepZ)
-            local distFromCenter = Vector3.new(stepX, 0, stepZ).Magnitude
-            if distFromCenter <= safeRadius and isSpotFree(candidatePos) then
-                table.insert(rawSpots, { pos = candidatePos, dist = distFromCenter })
+    -- วางไข่จากมุมขวาสุดฐาน เรียงแถวหน้ากระดานจากขวาไปซ้าย (Rightmost Corner -> Left in neat rows)
+    local surfaceY = 1.3
+    for relZ = -20, 16, 6.0 do
+        for relX = 26, -22, -6.0 do
+            local candidateWorldPos = bp.CFrame:PointToWorldSpace(Vector3.new(relX, surfaceY, relZ))
+            if isSpotFree(candidateWorldPos) then
+                table.insert(spots, candidateWorldPos)
+                if #spots >= 30 then break end
             end
         end
-    end
-
-    -- Always sort from center outward so eggs are placed neatly in concentric rings
-    table.sort(rawSpots, function(a, b)
-        return a.dist < b.dist
-    end)
-
-    for _, entry in ipairs(rawSpots) do
-        table.insert(spots, entry.pos)
         if #spots >= 30 then break end
     end
 
@@ -1014,6 +996,7 @@ local function placeEggOnPlot(eggTool, spot)
     end
 
     task.wait(0.04)
+    pcall(function() eggTool:Activate() end)
     if Remote_EggPlaced then
         pcall(function()
             Remote_EggPlaced:FireServer({ PlantPosition = spot })
@@ -1381,7 +1364,7 @@ local State = {
 
     -- Tab 7: Player & Settings
     WalkSpeed = 16,
-    JumpPower = 180,
+    JumpPower = 130,
     InfiniteJump = false,
     Noclip = false,
     ManualFly = false,
@@ -3450,12 +3433,18 @@ UIControls.InfiniteJump = TabSettings:Toggle({
 local function hookHumanoidJump(hum)
     if not hum then return end
     pcall(function()
+        hum.UseJumpPower = true
+        local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 160
+        hum.JumpPower = jp
         hum.StateChanged:Connect(function(oldState, newState)
             if newState == Enum.HumanoidStateType.Jumping then
-                local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
-                local char, hrp = getCharHrp()
+                local _, hrp = getCharHrp()
                 if hrp then
-                    hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
+                    local curY = hrp.AssemblyLinearVelocity.Y
+                    local targetJp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 160
+                    if curY < (targetJp * 0.75) then
+                        hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, targetJp, hrp.AssemblyLinearVelocity.Z)
+                    end
                 end
             end
         end)
@@ -3468,45 +3457,15 @@ do
 
     local lastJumpTick = 0
     table.insert(Connections, UserInputService.JumpRequest:Connect(function()
-        local now = tick()
-        if now - lastJumpTick < 0.08 then return end
-        local char, hrp, hum = getCharHrp()
-        if not hrp or not hum or hum.Health <= 0 then return end
-
         if State.InfiniteJump then
-            lastJumpTick = now
-            hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
-            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
-        else
-            -- Responsive ground jump / Bhop: immediate jump without cooldown stuck
-            local rayParams = RaycastParams.new()
-            rayParams.FilterDescendantsInstances = {char}
-            rayParams.FilterType = RaycastFilterType.Exclude
-            local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -4.5, 0), rayParams)
-            if ray then
+            local now = tick()
+            if now - lastJumpTick < 0.1 then return end
+            local _, hrp, hum = getCharHrp()
+            if hrp and hum and hum.Health > 0 then
                 lastJumpTick = now
                 hum:ChangeState(Enum.HumanoidStateType.Jumping)
-                local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
+                local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 160
                 hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
-            end
-        end
-    end))
-
-    -- Snappy Fall: eliminates floaty low-gravity feeling in air without any floor stutter
-    table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
-        if State.ManualFly or State.AutoFlyEggs then return end
-        local char, hrp, hum = getCharHrp()
-        if hrp and hum and hum.Health > 0 then
-            if hum:GetState() == Enum.HumanoidStateType.Freefall and hrp.AssemblyLinearVelocity.Y < -8 then
-                local rayParams = RaycastParams.new()
-                rayParams.FilterDescendantsInstances = {char}
-                rayParams.FilterType = RaycastFilterType.Exclude
-                local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -8, 0), rayParams)
-                if not ray then
-                    -- Smoothly accelerate downward fall in mid-air
-                    hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + Vector3.new(0, -160 * dt, 0)
-                end
             end
         end
     end))
@@ -3604,14 +3563,6 @@ UIControls.ESPMode = TabSettings:Dropdown({
 local function syncSpeedToHumanoid(hum)
     if not hum then return end
     pcall(function()
-        local char = hum.Parent
-        if char then
-            for _, p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    p.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.0, 0.0, 100, 100)
-                end
-            end
-        end
         hum.MaxSlopeAngle = 89
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
@@ -3792,7 +3743,7 @@ task.spawn(function()
             if targetSpeed and math.abs(hum.WalkSpeed - targetSpeed) > 0.5 then
                 pcall(function() hum.WalkSpeed = targetSpeed end)
             end
-            local jp = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or 180
+            local jp = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or 130
             if not hum.UseJumpPower then
                 pcall(function() hum.UseJumpPower = true end)
             end
