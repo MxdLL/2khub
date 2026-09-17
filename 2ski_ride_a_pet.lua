@@ -1152,11 +1152,13 @@ local function placeAllHeldEggsNow()
 
     local totalNow = #getPlotPlantedEggs()
     if _G.TwoSkiLoaded then
-        if totalPlaced > 0 then
-            WindUI:Notify({ Title = "2SKI", Content = "วางไข่สำเร็จ " .. tostring(totalPlaced) .. " ฟอง! (รวมในแปลง " .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" })
-        elseif consecutiveFails >= 3 or totalNow >= maxCapacity then
-            WindUI:Notify({ Title = "2SKI", Content = "แปลงวางไข่เต็มแล้ว (" .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" })
-        end
+        pcall(function()
+            if totalPlaced > 0 then
+                if WindUI and WindUI.Notify then WindUI:Notify({ Title = "2SKI", Content = "วางไข่สำเร็จ " .. tostring(totalPlaced) .. " ฟอง! (รวมในแปลง " .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" }) end
+            elseif consecutiveFails >= 3 or totalNow >= maxCapacity then
+                if WindUI and WindUI.Notify then WindUI:Notify({ Title = "2SKI", Content = "แปลงวางไข่เต็มแล้ว (" .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" }) end
+            end
+        end)
     end
     return totalPlaced > 0
 end
@@ -1739,7 +1741,7 @@ TwoSkiLogoAsset = get2SkiLogoAsset()
 
 local Window = WindUI:CreateWindow({
     Title = "2SKI",
-    SubTitle = "ขี่สัตว์เลี้ยง (Ride a Pet)",
+    SubTitle = "ขี่สัตว์เลี้ยง (Ride a Pet) v3.2.1",
     Folder = "2ski_ride_a_pet",
     Theme = "Sky",
     Transparent = false,
@@ -3464,17 +3466,47 @@ do
     local _, _, initHum = getCharHrp()
     if initHum then hookHumanoidJump(initHum) end
 
-    local lastInfJumpTick = 0
+    local lastJumpTick = 0
     table.insert(Connections, UserInputService.JumpRequest:Connect(function()
+        local now = tick()
+        if now - lastJumpTick < 0.08 then return end
+        local char, hrp, hum = getCharHrp()
+        if not hrp or not hum or hum.Health <= 0 then return end
+
         if State.InfiniteJump then
-            local now = tick()
-            if now - lastInfJumpTick < 0.05 then return end
-            local _, hrp, hum = getCharHrp()
-            if hrp and hum and hum.Health > 0 then
-                lastInfJumpTick = now
+            lastJumpTick = now
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
+            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
+        else
+            -- Responsive ground jump / Bhop: immediate jump without cooldown stuck
+            local rayParams = RaycastParams.new()
+            rayParams.FilterDescendantsInstances = {char}
+            rayParams.FilterType = RaycastFilterType.Exclude
+            local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -4.5, 0), rayParams)
+            if ray then
+                lastJumpTick = now
                 hum:ChangeState(Enum.HumanoidStateType.Jumping)
                 local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
                 hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
+            end
+        end
+    end))
+
+    -- Snappy Fall: eliminates floaty low-gravity feeling in air without any floor stutter
+    table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
+        if State.ManualFly or State.AutoFlyEggs then return end
+        local char, hrp, hum = getCharHrp()
+        if hrp and hum and hum.Health > 0 then
+            if hum:GetState() == Enum.HumanoidStateType.Freefall and hrp.AssemblyLinearVelocity.Y < -8 then
+                local rayParams = RaycastParams.new()
+                rayParams.FilterDescendantsInstances = {char}
+                rayParams.FilterType = RaycastFilterType.Exclude
+                local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -8, 0), rayParams)
+                if not ray then
+                    -- Smoothly accelerate downward fall in mid-air
+                    hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + Vector3.new(0, -160 * dt, 0)
+                end
             end
         end
     end))
@@ -3572,6 +3604,17 @@ UIControls.ESPMode = TabSettings:Dropdown({
 local function syncSpeedToHumanoid(hum)
     if not hum then return end
     pcall(function()
+        local char = hum.Parent
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.0, 0.0, 100, 100)
+                end
+            end
+        end
+        hum.MaxSlopeAngle = 89
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         if State.RideFastSpeed then
             hum.WalkSpeed = State.RideSpeedValue or 100
         elseif State.WalkSpeed and State.WalkSpeed ~= 16 then
@@ -3749,24 +3792,15 @@ task.spawn(function()
             if targetSpeed and math.abs(hum.WalkSpeed - targetSpeed) > 0.5 then
                 pcall(function() hum.WalkSpeed = targetSpeed end)
             end
-            pcall(function()
-                hum.MaxSlopeAngle = 89
-                hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-                local jp = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or 180
-                if not hum.UseJumpPower then
-                    hum.UseJumpPower = true
-                end
-                if math.abs(hum.JumpPower - jp) > 1 then
-                    hum.JumpPower = jp
-                end
-                local targetH = math.clamp((jp * jp) / (2 * 196.2), 7.2, 120)
-                if math.abs(hum.JumpHeight - targetH) > 1 then
-                    hum.JumpHeight = targetH
-                end
-            end)
+            local jp = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or 180
+            if not hum.UseJumpPower then
+                pcall(function() hum.UseJumpPower = true end)
+            end
+            if math.abs(hum.JumpPower - jp) > 1 then
+                pcall(function() hum.JumpPower = jp end)
+            end
         end
-        task.wait(targetSpeed and 0.15 or 0.3)
+        task.wait(targetSpeed and 0.25 or 0.5)
     end
 end)
 
@@ -4362,6 +4396,7 @@ task.spawn(function()
 end)
 
 _G.TwoSkiLoaded = true
+_G.TwoSkiVersion = "v3.2.1 [SMOOTH-PHYSICS]"
 -- Initialize UI & Settings
 pcall(function() if Window and Window.SelectTab then Window:SelectTab(1) end end)
 applyThemePreset(State.CurrentTheme)
@@ -4374,8 +4409,12 @@ task.defer(function()
     end
 end)
 
-WindUI:Notify({
-    Title = "2SKI Master Edition",
-    Content = isMobile and "โหมดมือถือ & iOS พร้อมใช้งาน! ลื่นไหล 0% แตะหรือลากปุ่ม 2SKI ได้ทันที" or "ธีม 2SKI Cyber Cyan พร้อมใช้งาน! กด Left Ctrl หรือคลิกปุ่มลอย 2SKI เพื่อเปิด/ปิด"
-})
-print("[2SKI] Master Edition successfully loaded.")
+pcall(function()
+    if WindUI and WindUI.Notify then
+        WindUI:Notify({
+            Title = "2SKI Master Edition v3.2.1",
+            Content = isMobile and "โหมดมือถือ & iOS พร้อมใช้งาน! ลื่นไหล 0% แตะหรือลากปุ่ม 2SKI ได้ทันที" or "ธีม 2SKI Cyber Cyan พร้อมใช้งาน! กด Left Ctrl หรือคลิกปุ่มลอย 2SKI เพื่อเปิด/ปิด"
+        })
+    end
+end)
+print("[2SKI] Master Edition v3.2.1 successfully loaded.")
