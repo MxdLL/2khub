@@ -168,7 +168,7 @@ local State = {
     PlaceEggRarityFilter = {},
     MinEggWeight = "0 KG+ (ไม่จำกัด)",
     PrioritizeHeaviestEgg = false,
-    FlySpeed = 250,
+    FlySpeed = 400,
     TargetEggs = {},
     RarityFilter = {},
     AutoHatch = false,
@@ -688,7 +688,7 @@ local function tweenFlight(targetPos, speed)
     if not hrp then return false end
     local dist = (hrp.Position - targetPos).Magnitude
     if dist < 0.8 then return true end
-    local dur = math.max(dist / (speed or 250), 0.06)
+    local dur = math.max(dist / (speed or 400), 0.03)
 
     ensureFlightHold(hrp)
 
@@ -2776,7 +2776,7 @@ TabEgg:Button({
 UIControls.FlySpeed = TabEgg:Slider({
     Title = "ความเร็วในการบิน (Fly Speed)",
     Step = 10,
-    Value = { Min = 50, Max = 350, Default = 250 },
+    Value = { Min = 50, Max = 750, Default = 400 },
     Callback = function(val) State.FlySpeed = val end
 })
 
@@ -4244,15 +4244,15 @@ task.spawn(function()
 
             -- Ascend slightly if lower than cruising altitude
             if startPos.Y < cruisingY - 2 then
-                tweenFlight(Vector3.new(startPos.X, cruisingY, startPos.Z), State.FlySpeed * 1.2)
+                tweenFlight(Vector3.new(startPos.X, cruisingY, startPos.Z), State.FlySpeed * 1.4)
             end
 
             -- Fly horizontally across smoothly directly over egg
-            tweenFlight(Vector3.new(targetEggPos.X, cruisingY, targetEggPos.Z), State.FlySpeed)
+            tweenFlight(Vector3.new(targetEggPos.X, cruisingY, targetEggPos.Z), State.FlySpeed * 1.25)
 
             -- Descend right onto the egg (1.8 studs)
-            tweenFlight(targetEggPos, State.FlySpeed * 1.1)
-            task.wait(0.08)
+            tweenFlight(targetEggPos, State.FlySpeed * 1.35)
+            task.wait(0.02)
 
             -- Pickup confirmation: actively ensure egg enters Basket or is grabbed
             local prompt = closestEgg:FindFirstChildWhichIsA("ProximityPrompt", true)
@@ -4262,9 +4262,9 @@ task.spawn(function()
 
             local pickupSuccess = false
             local t0 = tick()
-            while tick() - t0 < 0.75 do
+            while tick() - t0 < 0.45 do
                 if prompt and prompt.Enabled then
-                    triggerPrompt(prompt, 0.08)
+                    triggerPrompt(prompt, 0.04)
                 end
                 if Remote_EggPickup then
                     if targetUuid then
@@ -4273,7 +4273,7 @@ task.spawn(function()
                         pcall(function() Remote_EggPickup:FireServer(closestEgg.Name) end)
                     end
                 end
-                task.wait(0.08)
+                task.wait(0.03)
                 if not closestEgg.Parent or (basket and #basket:GetChildren() > prevBasketCount) then
                     pickupSuccess = true
                     break
@@ -4289,15 +4289,15 @@ task.spawn(function()
 
                 -- Ascend slightly to return cruising altitude
                 if hrp.Position.Y < returnCruisingY - 2 then
-                    tweenFlight(Vector3.new(hrp.Position.X, returnCruisingY, hrp.Position.Z), State.FlySpeed * 1.2)
+                    tweenFlight(Vector3.new(hrp.Position.X, returnCruisingY, hrp.Position.Z), State.FlySpeed * 1.4)
                 end
 
                 -- Fly horizontally across back to plot
-                tweenFlight(Vector3.new(basePos.X, returnCruisingY, basePos.Z), State.FlySpeed)
+                tweenFlight(Vector3.new(basePos.X, returnCruisingY, basePos.Z), State.FlySpeed * 1.25)
 
                 -- Descend smoothly onto baseplate
-                tweenFlight(basePos, State.FlySpeed * 1.1)
-                task.wait(0.05)
+                tweenFlight(basePos, State.FlySpeed * 1.35)
+                task.wait(0.03)
 
                 -- Deposit into backpack cleanly (waits until basket is confirmed empty!)
                 depositBasketToBackpack()
@@ -4314,7 +4314,7 @@ task.spawn(function()
         end)
 
         releaseFlightHold()
-        task.wait(0.2)
+        task.wait(0.06)
     end
 end)
 
