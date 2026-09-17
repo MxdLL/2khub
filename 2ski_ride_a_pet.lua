@@ -751,12 +751,18 @@ local function getEggToolRarity(eggTool)
     return "Common"
 end
 
+local function isAllSelection(str)
+    if not str then return false end
+    local s = string.lower(tostring(str))
+    return s:find("all", 1, true) ~= nil or s:find("ทั้งหมด", 1, true) ~= nil
+end
+
 local function isEggToolRarityMatching(eggTool)
     if not eggTool then return false end
     local rarities = normalizeMultiSelection(State.PlaceEggRarityFilter)
     if #rarities == 0 then return true end
     for _, r in ipairs(rarities) do
-        if r == "All Rarities" or r:find("All", 1, true) or r:find("ทั้งหมด", 1, true) then
+        if isAllSelection(r) or r == "All Rarities" then
             return true
         end
     end
@@ -774,7 +780,7 @@ local function isEggToolTypeMatching(eggTool)
     local targets = normalizeMultiSelection(State.PlaceEggTarget)
     if #targets == 0 then return true end
     for _, t in ipairs(targets) do
-        if t == "All / ทั้งหมด" or t == "All" or t:find("All", 1, true) or t:find("ทั้งหมด", 1, true) then
+        if isAllSelection(t) or t == "All / ทั้งหมด" or t == "All" then
             return true
         end
     end
@@ -971,6 +977,14 @@ local function placeEggOnPlot(eggTool, spot)
 
     if not spot then return false end
 
+    -- Move character directly above spot so server proximity check succeeds 100%
+    hrp.CFrame = CFrame.new(spot + Vector3.new(0, 3, 0))
+    pcall(function()
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
+    end)
+
     -- Cleanly unequip currently held tools first to prevent tool switching deadlock
     if eggTool.Parent ~= char then
         pcall(function() hum:UnequipTools() end)
@@ -986,11 +1000,7 @@ local function placeEggOnPlot(eggTool, spot)
         return false
     end
 
-    pcall(function()
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        hrp.RotVelocity = Vector3.zero
-    end)
-
+    task.wait(0.04)
     if Remote_EggPlaced then
         pcall(function()
             Remote_EggPlaced:FireServer({ PlantPosition = spot })
@@ -1050,6 +1060,15 @@ local function placeAllHeldEggsNow()
         return false
     end
 
+    local maxNests = (myPlot:FindFirstChild("Nests") and #myPlot.Nests:GetChildren() > 0) and #myPlot.Nests:GetChildren() or 5
+    local maxCapacity = maxNests * 2
+    local curPlanted = #getPlotPlantedEggs()
+    if curPlanted >= maxCapacity then
+        lastPlotFullTime = tick()
+        isPlacingEggs = false
+        return false
+    end
+
     local initialEggs = getInventoryEggs(true)
     if #initialEggs == 0 then initialEggs = getInventoryEggs(false) end
     if #initialEggs == 0 then
@@ -1064,6 +1083,11 @@ local function placeAllHeldEggsNow()
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
         local curPlot = getMyPlot()
         if not curPlot then break end
+
+        if #getPlotPlantedEggs() >= maxCapacity then
+            lastPlotFullTime = tick()
+            break
+        end
 
         local curInv = getInventoryEggs(true)
         if #curInv == 0 then curInv = getInventoryEggs(false) end
@@ -1084,8 +1108,8 @@ local function placeAllHeldEggsNow()
         local prevPlantedCount = #getPlotPlantedEggs()
         local placedOk = false
 
-        -- Try up to 3 candidate spots
-        for spotIdx = 1, math.min(#openSpots, 3) do
+        -- Try candidate spots
+        for spotIdx = 1, math.min(#openSpots, 4) do
             local candidateSpot = openSpots[spotIdx]
             local success = placeEggOnPlot(eggTool, candidateSpot)
             if success then
@@ -1108,8 +1132,8 @@ local function placeAllHeldEggsNow()
             task.wait(0.08)
         else
             consecutiveFails = consecutiveFails + 1
-            if consecutiveFails >= 2 then
-                -- แปลงเต็มขีดจำกัดแล้ว
+            if consecutiveFails >= 3 then
+                -- แปลงเต็มขีดจำกัดแล้ว หรือเซิร์ฟเวอร์ปฏิเสธ
                 lastPlotFullTime = tick()
                 break
             end
@@ -1122,9 +1146,9 @@ local function placeAllHeldEggsNow()
     local totalNow = #getPlotPlantedEggs()
     if _G.TwoSkiLoaded then
         if totalPlaced > 0 then
-            WindUI:Notify({ Title = "2SKI", Content = "วางไข่สำเร็จ " .. tostring(totalPlaced) .. " ฟอง! (รวมในแปลง " .. tostring(totalNow) .. " ฟอง)" })
-        elseif consecutiveFails >= 2 then
-            WindUI:Notify({ Title = "2SKI", Content = "แปลงวางไข่เต็มแล้ว (" .. tostring(totalNow) .. " ฟอง)" })
+            WindUI:Notify({ Title = "2SKI", Content = "วางไข่สำเร็จ " .. tostring(totalPlaced) .. " ฟอง! (รวมในแปลง " .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" })
+        elseif consecutiveFails >= 3 or totalNow >= maxCapacity then
+            WindUI:Notify({ Title = "2SKI", Content = "แปลงวางไข่เต็มแล้ว (" .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" })
         end
     end
     return totalPlaced > 0
@@ -2307,12 +2331,6 @@ local function isEggMatching(egg)
         end
     end
 
-    local function isAllSelection(str)
-        if not str then return false end
-        local s = string.lower(tostring(str))
-        return s:find("all", 1, true) ~= nil or s:find("ทั้งหมด", 1, true) ~= nil
-    end
-
     -- 1. Min Egg Weight Filter (กิโลไข่ที่จะเก็บ) - Enforced First!
     local minKGStr = State.MinEggWeight or "0 KG+ (ไม่จำกัด)"
     if not isAllSelection(minKGStr) and not minKGStr:find("0 KG") then
@@ -2761,7 +2779,8 @@ UIControls.PlaceEggRarityFilter = TabEgg:Dropdown({
 TabEgg:Button({
     Title = "วางไข่ทั้งหมดลงแปลงทันที (วางจนเต็มแปลง / NoNest)",
     Callback = function()
-        placeAllHeldEggsNow()
+        lastPlotFullTime = 0
+        task.spawn(placeAllHeldEggsNow)
     end
 })
 
@@ -3433,34 +3452,20 @@ local lastInfJumpTick = 0
 local infJumpCon = UserInputService.JumpRequest:Connect(function()
     if State.InfiniteJump then
         local now = tick()
-        if now - lastInfJumpTick < 0.16 then return end
+        if now - lastInfJumpTick < 0.08 then return end
         local _, hrp, hum = getCharHrp()
         if hrp and hum and hum.Health > 0 then
             lastInfJumpTick = now
-            local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 100)
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 70, 350), hrp.AssemblyLinearVelocity.Z)
-        end
-    end
-end)
-table.insert(Connections, infJumpCon)
-
--- Snappy Athletic Jump & Descent Controller (Eliminates floaty slow-mo & sticking)
-local fastFallCon = RunService.Heartbeat:Connect(function(dt)
-    if not _G.TwoSkiRunning or _G.TwoSkiActiveToken ~= myToken then return end
-    if State.ManualFly then return end
-    local _, hrp, hum = getCharHrp()
-    if hrp and hum and hum.Health > 0 then
-        local state = hum:GetState()
-        if state == Enum.HumanoidStateType.Freefall and hrp.AssemblyLinearVelocity.Y < -2 then
-            local currentVy = hrp.AssemblyLinearVelocity.Y
-            if currentVy > -180 then
-                hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, currentVy - (dt * 120), hrp.AssemblyLinearVelocity.Z)
+            local curState = hum:GetState()
+            if curState == Enum.HumanoidStateType.Freefall or curState == Enum.HumanoidStateType.Jumping then
+                local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 100)
+                hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 70, 350), hrp.AssemblyLinearVelocity.Z)
             end
         end
     end
 end)
-table.insert(Connections, fastFallCon)
+table.insert(Connections, infJumpCon)
 
 UIControls.Noclip = TabSettings:Toggle({
     Title = "เดินทะลุกำแพง & ทะลุภูเขา (Noclip All)",
@@ -3728,17 +3733,19 @@ task.spawn(function()
         end
 
         local _, _, hum = getCharHrp()
-        if hum then
-            if targetSpeed and hum.WalkSpeed ~= targetSpeed then
+        if hum and hum.Health > 0 then
+            if targetSpeed and math.abs(hum.WalkSpeed - targetSpeed) > 0.5 then
                 pcall(function() hum.WalkSpeed = targetSpeed end)
             end
-            -- Maintain crisp high jump continuously (Always enforce UseJumpPower and exact matching JumpHeight)
             pcall(function()
+                hum.MaxSlopeAngle = 89
                 local jp = State.JumpPower or 100
-                local g = (workspace.Gravity and workspace.Gravity > 0) and workspace.Gravity or 250
-                hum.UseJumpPower = true
-                hum.JumpPower = jp
-                hum.JumpHeight = (jp ^ 2) / (2 * g)
+                if not hum.UseJumpPower then
+                    hum.UseJumpPower = true
+                end
+                if math.abs(hum.JumpPower - jp) > 1 then
+                    hum.JumpPower = jp
+                end
             end)
         end
         task.wait(targetSpeed and 0.25 or 0.4)
