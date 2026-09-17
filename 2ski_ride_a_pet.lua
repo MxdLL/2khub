@@ -1040,7 +1040,6 @@ local function placeEggOnPlot(eggTool, spot)
     end
 
     if not isOnMyPlot() then
-        pcall(function() hum:UnequipTools() end)
         return false
     end
 
@@ -1133,10 +1132,12 @@ local function autoHatchPlotEggs()
 end
 
 local isPlacingEggs = false
+local isCollectingEgg = false
 local lastPlotFullTime = 0
 
 local function placeAllHeldEggsNow()
     if isPlacingEggs then return false end
+    if not isOnMyPlot() then return false end
     if tick() - lastPlotFullTime < 1.5 then return false end
     isPlacingEggs = true
 
@@ -1151,17 +1152,15 @@ local function placeAllHeldEggsNow()
         local char, hrp, hum = getCharHrp()
         if not char or not hrp or not hum then return end
 
-        -- If plot is already full, unequip immediately and return
+        -- If plot is already full, return quietly without unequipping tools randomly
         if isPlotFull() then
             lastPlotFullTime = tick()
-            pcall(function() hum:UnequipTools() end)
             return
         end
 
         local initialEggs = getInventoryEggs(true)
         if #initialEggs == 0 then initialEggs = getInventoryEggs(false) end
         if #initialEggs == 0 then
-            pcall(function() hum:UnequipTools() end)
             return
         end
 
@@ -1176,7 +1175,6 @@ local function placeAllHeldEggsNow()
         end
 
         if not isOnMyPlot() then
-            pcall(function() hum:UnequipTools() end)
             return
         end
 
@@ -1243,11 +1241,13 @@ local function placeAllHeldEggsNow()
         end
     end)
 
-    -- CLEANUP: Always unequip tools after placement loop finishes or exits!
-    pcall(function()
-        local _, _, hum = getCharHrp()
-        if hum then hum:UnequipTools() end
-    end)
+    -- CLEANUP: Only unequip tools if we were actually on plot placing eggs
+    if isOnMyPlot() then
+        pcall(function()
+            local _, _, hum = getCharHrp()
+            if hum then hum:UnequipTools() end
+        end)
+    end
 
     isPlacingEggs = false
 
@@ -4230,6 +4230,7 @@ task.spawn(function()
         local closestEgg = candidates[1].egg
 
         pcall(function()
+            isCollectingEgg = true
             local eggPart = closestEgg:FindFirstChildWhichIsA("BasePart") or closestEgg.PrimaryPart
             local eggPos = eggPart and eggPart.Position or closestEgg:GetPivot().Position
             local targetEggPos = eggPos + Vector3.new(0, 1.8, 0)
@@ -4254,7 +4255,7 @@ task.spawn(function()
             tweenFlight(targetEggPos, State.FlySpeed * 1.35)
             task.wait(0.02)
 
-            -- Pickup confirmation: actively ensure egg enters Basket or is grabbed
+            -- Pickup confirmation: actively ensure egg enters Basket or is grabbed into character
             local prompt = closestEgg:FindFirstChildWhichIsA("ProximityPrompt", true)
             local targetUuid = candidates[1] and candidates[1].eggUuid
             local basket = LocalPlayer:FindFirstChild("Basket")
@@ -4262,7 +4263,7 @@ task.spawn(function()
 
             local pickupSuccess = false
             local t0 = tick()
-            while tick() - t0 < 0.45 do
+            while tick() - t0 < 0.55 do
                 if prompt and prompt.Enabled then
                     triggerPrompt(prompt, 0.04)
                 end
@@ -4274,14 +4275,38 @@ task.spawn(function()
                     end
                 end
                 task.wait(0.03)
-                if not closestEgg.Parent or (basket and #basket:GetChildren() > prevBasketCount) then
+
+                local hasEggInChar = false
+                local curChar = LocalPlayer.Character
+                if curChar then
+                    for _, it in ipairs(curChar:GetChildren()) do
+                        if it:IsA("Tool") and (it.Name:find("Egg") or it:GetAttribute("Egg") or it:GetAttribute("IsEgg")) then
+                            hasEggInChar = true
+                            break
+                        end
+                    end
+                end
+
+                if not closestEgg.Parent or (basket and #basket:GetChildren() > prevBasketCount) or hasEggInChar then
                     pickupSuccess = true
                     break
                 end
             end
 
-            -- Only fly back to plot if basket actually contains an egg or pickup succeeded!
-            if (basket and #basket:GetChildren() > 0) or pickupSuccess then
+            local hasBasketEgg = basket and #basket:GetChildren() > 0
+            local hasHeldEgg = false
+            local curChar = LocalPlayer.Character
+            if curChar then
+                for _, it in ipairs(curChar:GetChildren()) do
+                    if it:IsA("Tool") and (it.Name:find("Egg") or it:GetAttribute("Egg") or it:GetAttribute("IsEgg")) then
+                        hasHeldEgg = true
+                        break
+                    end
+                end
+            end
+
+            -- Only fly back to plot if basket actually contains an egg or pickup succeeded or egg tool is held!
+            if hasBasketEgg or hasHeldEgg or pickupSuccess then
                 local myPlot = getMyPlot()
                 local baseplate = myPlot and myPlot:FindFirstChild("Baseplate")
                 local basePos = baseplate and (baseplate.Position + Vector3.new(0, 2.8, 0)) or (getPlotCenterPos() or Vector3.new(172, 40316, 1067))
@@ -4311,9 +4336,11 @@ task.spawn(function()
             State.Noclip = prevNoclip
             updateNoclipConnection()
             releaseFlightHold()
+            isCollectingEgg = false
         end)
 
         releaseFlightHold()
+        isCollectingEgg = false
         task.wait(0.06)
     end
 end)
@@ -4321,23 +4348,16 @@ end)
 -- Dedicated Coordinated Egg Placement & Nesting Worker (Places continuously until plot is truly full)
 task.spawn(function()
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
-        if State.AutoPlaceEggs and not isPlacingEggs then
+        if State.AutoPlaceEggs and not isPlacingEggs and not isCollectingEgg then
             pcall(function()
-                if isPlotFull() then
-                    local _, _, hum = getCharHrp()
-                    if hum then pcall(function() hum:UnequipTools() end) end
-                    return
-                end
+                if isPlotFull() then return end
+                -- STRICT: Only place when character is physically at their plot base!
+                if not isOnMyPlot() then return end
+
                 local invEggs = getInventoryEggs(true)
                 if #invEggs == 0 then invEggs = getInventoryEggs(false) end
                 if #invEggs > 0 then
-                    -- STRICT: Only place when character is physically at their plot base!
-                    if isOnMyPlot() then
-                        placeAllHeldEggsNow()
-                    else
-                        local _, _, hum = getCharHrp()
-                        if hum then pcall(function() hum:UnequipTools() end) end
-                    end
+                    placeAllHeldEggsNow()
                 end
             end)
             task.wait(0.8)
