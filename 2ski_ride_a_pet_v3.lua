@@ -3441,9 +3441,10 @@ UIControls.InfiniteJump = TabSettings:Toggle({
     Callback = function(val) State.InfiniteJump = val end
 })
 
+local hookedHumanoids = {}
 local function hookHumanoidJump(hum)
-    if not hum or hum._TwoSkiJumpHooked then return end
-    hum._TwoSkiJumpHooked = true
+    if not hum or hookedHumanoids[hum] then return end
+    hookedHumanoids[hum] = true
     pcall(function()
         hum.UseJumpPower = true
         local jp = (State.JumpPower and State.JumpPower > 30) and State.JumpPower or 180
