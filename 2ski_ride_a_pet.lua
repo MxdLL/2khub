@@ -175,7 +175,8 @@ local function getMyPlot()
         local ownerId = cachedPlot:GetAttribute("NestsOwnerLoaded") or cachedPlot:GetAttribute("OwnerUserId")
         local ownerName = cachedPlot:GetAttribute("Owner")
         local dataOwner = cachedPlot:FindFirstChild("Data") and cachedPlot.Data:FindFirstChild("Owner")
-        if (ownerId and tostring(ownerId) == tostring(LocalPlayer.UserId)) or (ownerName and ownerName == LocalPlayer.Name) or (dataOwner and dataOwner.Value == LocalPlayer) then
+        local dataOwnerVal = dataOwner and (typeof(dataOwner.Value) == "Instance" and dataOwner.Value.Name or tostring(dataOwner.Value))
+        if (ownerId and (tostring(ownerId) == tostring(LocalPlayer.UserId) or tonumber(ownerId) == LocalPlayer.UserId)) or (ownerName and tostring(ownerName) == LocalPlayer.Name) or (dataOwnerVal and dataOwnerVal:find(LocalPlayer.Name)) then
             return cachedPlot
         end
     end
@@ -190,7 +191,8 @@ local function getMyPlot()
             local ownerId = p:GetAttribute("NestsOwnerLoaded") or p:GetAttribute("OwnerUserId")
             local ownerName = p:GetAttribute("Owner")
             local dataOwner = p:FindFirstChild("Data") and p.Data:FindFirstChild("Owner")
-            if (ownerId and tostring(ownerId) == tostring(LocalPlayer.UserId)) or (ownerName and ownerName == LocalPlayer.Name) or (dataOwner and dataOwner.Value == LocalPlayer) then
+            local dataOwnerVal = dataOwner and (typeof(dataOwner.Value) == "Instance" and dataOwner.Value.Name or tostring(dataOwner.Value))
+            if (ownerId and (tostring(ownerId) == tostring(LocalPlayer.UserId) or tonumber(ownerId) == LocalPlayer.UserId)) or (ownerName and tostring(ownerName) == LocalPlayer.Name) or (dataOwnerVal and dataOwnerVal:find(LocalPlayer.Name)) then
                 cachedPlot = p
                 return p
             end
@@ -912,44 +914,52 @@ local function getOpenPlacementPositions(extraOccupiedSpots)
 
     local posY = bp.Position.Y + (bp.Size.Y / 2) + 0.5
     local center = Vector3.new(bp.Position.X, posY, bp.Position.Z)
-    local halfX = math.clamp((bp.Size.X / 2) - 4, 10, 34)
-    local halfZ = math.clamp((bp.Size.Z / 2) - 4, 10, 34)
+    local safeRadius = 22 -- Inner safe verified legal planting zone (avoids outer fence/border rejections)
 
     local function isSpotFree(pos)
         local posFlat = Vector3.new(pos.X, 0, pos.Z)
         for _, egg in ipairs(plantedEggs) do
             local pPart = egg:FindFirstChildWhichIsA("BasePart") or egg.PrimaryPart
             local pPos = pPart and pPart.Position or egg:GetPivot().Position
-            if (Vector3.new(pPos.X, 0, pPos.Z) - posFlat).Magnitude < 4.2 then
+            if (Vector3.new(pPos.X, 0, pPos.Z) - posFlat).Magnitude < 4.0 then
                 return false
             end
         end
         if extraOccupiedSpots then
             for _, occSpot in ipairs(extraOccupiedSpots) do
-                if (Vector3.new(occSpot.X, 0, occSpot.Z) - posFlat).Magnitude < 4.2 then
+                if (Vector3.new(occSpot.X, 0, occSpot.Z) - posFlat).Magnitude < 4.0 then
                     return false
                 end
             end
         end
         for _, existingSpot in ipairs(spots) do
-            if (Vector3.new(existingSpot.X, 0, existingSpot.Z) - posFlat).Magnitude < 4.2 then
+            if (Vector3.new(existingSpot.X, 0, existingSpot.Z) - posFlat).Magnitude < 4.0 then
                 return false
             end
         end
         return true
     end
 
-    local step = 4.8
-    for stepX = -halfX, halfX, step do
-        for stepZ = -halfZ, halfZ, step do
+    local step = 4.5
+    local rawSpots = {}
+    for stepX = -safeRadius, safeRadius, step do
+        for stepZ = -safeRadius, safeRadius, step do
             local candidatePos = center + Vector3.new(stepX, 0, stepZ)
-            if isSpotFree(candidatePos) then
-                table.insert(spots, candidatePos)
-                if #spots >= 120 then
-                    return spots
-                end
+            local distFromCenter = Vector3.new(stepX, 0, stepZ).Magnitude
+            if distFromCenter <= safeRadius and isSpotFree(candidatePos) then
+                table.insert(rawSpots, { pos = candidatePos, dist = distFromCenter })
             end
         end
+    end
+
+    -- Always sort from center outward so eggs are placed neatly in concentric rings
+    table.sort(rawSpots, function(a, b)
+        return a.dist < b.dist
+    end)
+
+    for _, entry in ipairs(rawSpots) do
+        table.insert(spots, entry.pos)
+        if #spots >= 30 then break end
     end
 
     return spots
@@ -1051,95 +1061,89 @@ local lastPlotFullTime = 0
 
 local function placeAllHeldEggsNow()
     if isPlacingEggs then return false end
-    if tick() - lastPlotFullTime < 2.5 then return false end
+    if tick() - lastPlotFullTime < 2.0 then return false end
     isPlacingEggs = true
-
-    local myPlot = getMyPlot()
-    if not myPlot then
-        isPlacingEggs = false
-        return false
-    end
-
-    local maxNests = (myPlot:FindFirstChild("Nests") and #myPlot.Nests:GetChildren() > 0) and #myPlot.Nests:GetChildren() or 5
-    local maxCapacity = maxNests * 2
-    local curPlanted = #getPlotPlantedEggs()
-    if curPlanted >= maxCapacity then
-        lastPlotFullTime = tick()
-        isPlacingEggs = false
-        return false
-    end
-
-    local initialEggs = getInventoryEggs(true)
-    if #initialEggs == 0 then initialEggs = getInventoryEggs(false) end
-    if #initialEggs == 0 then
-        isPlacingEggs = false
-        return false
-    end
 
     local totalPlaced = 0
     local consecutiveFails = 0
-    local recentlyPlacedSpots = {}
+    local maxCapacity = 10
 
-    while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
-        local curPlot = getMyPlot()
-        if not curPlot then break end
+    local ok, err = pcall(function()
+        local myPlot = getMyPlot()
+        if not myPlot then return end
 
-        if #getPlotPlantedEggs() >= maxCapacity then
+        local maxNests = (myPlot:FindFirstChild("Nests") and #myPlot.Nests:GetChildren() > 0) and #myPlot.Nests:GetChildren() or 5
+        maxCapacity = math.max(maxNests * 2, 10)
+        local curPlanted = #getPlotPlantedEggs()
+        if curPlanted >= maxCapacity then
             lastPlotFullTime = tick()
-            break
+            return
         end
 
-        local curInv = getInventoryEggs(true)
-        if #curInv == 0 then curInv = getInventoryEggs(false) end
-        if #curInv == 0 then
-            -- ไข่ในกระเป๋าหมดแล้ว
-            break
-        end
+        local initialEggs = getInventoryEggs(true)
+        if #initialEggs == 0 then initialEggs = getInventoryEggs(false) end
+        if #initialEggs == 0 then return end
 
-        local eggTool = curInv[1]
-        if not eggTool or not eggTool.Parent then break end
+        local recentlyPlacedSpots = {}
 
-        local openSpots = getOpenPlacementPositions(recentlyPlacedSpots)
-        if #openSpots == 0 then
-            lastPlotFullTime = tick()
-            break
-        end
+        while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
+            local curPlot = getMyPlot()
+            if not curPlot then break end
 
-        local prevPlantedCount = #getPlotPlantedEggs()
-        local placedOk = false
-
-        -- Try candidate spots
-        for spotIdx = 1, math.min(#openSpots, 4) do
-            local candidateSpot = openSpots[spotIdx]
-            local success = placeEggOnPlot(eggTool, candidateSpot)
-            if success then
-                local t0 = tick()
-                while tick() - t0 < 0.45 do
-                    if not eggTool.Parent or #getPlotPlantedEggs() > prevPlantedCount then
-                        placedOk = true
-                        table.insert(recentlyPlacedSpots, candidateSpot)
-                        break
-                    end
-                    task.wait(0.04)
-                end
-            end
-            if placedOk then break end
-        end
-
-        if placedOk then
-            totalPlaced = totalPlaced + 1
-            consecutiveFails = 0
-            task.wait(0.08)
-        else
-            consecutiveFails = consecutiveFails + 1
-            if consecutiveFails >= 3 then
-                -- แปลงเต็มขีดจำกัดแล้ว หรือเซิร์ฟเวอร์ปฏิเสธ
+            if #getPlotPlantedEggs() >= maxCapacity then
                 lastPlotFullTime = tick()
                 break
             end
-            task.wait(0.15)
+
+            local curInv = getInventoryEggs(true)
+            if #curInv == 0 then curInv = getInventoryEggs(false) end
+            if #curInv == 0 then break end
+
+            local eggTool = curInv[1]
+            if not eggTool or not eggTool.Parent then break end
+
+            local openSpots = getOpenPlacementPositions(recentlyPlacedSpots)
+            if #openSpots == 0 then
+                lastPlotFullTime = tick()
+                break
+            end
+
+            local prevPlantedCount = #getPlotPlantedEggs()
+            local placedOk = false
+
+            -- Try candidate spots
+            for spotIdx = 1, math.min(#openSpots, 4) do
+                local candidateSpot = openSpots[spotIdx]
+                local success = placeEggOnPlot(eggTool, candidateSpot)
+                if success then
+                    local t0 = tick()
+                    while tick() - t0 < 0.45 do
+                        if not eggTool.Parent or #getPlotPlantedEggs() > prevPlantedCount then
+                            placedOk = true
+                            table.insert(recentlyPlacedSpots, candidateSpot)
+                            break
+                        end
+                        task.wait(0.04)
+                    end
+                end
+                if placedOk then break end
+            end
+
+            if placedOk then
+                totalPlaced = totalPlaced + 1
+                consecutiveFails = 0
+                task.wait(0.08)
+            else
+                consecutiveFails = consecutiveFails + 1
+                if consecutiveFails >= 3 then
+                    -- แปลงเต็มขีดจำกัดแล้ว หรือเซิร์ฟเวอร์ปฏิเสธ
+                    lastPlotFullTime = tick()
+                    break
+                end
+                task.wait(0.15)
+            end
         end
-    end
+    end)
 
     isPlacingEggs = false
 
@@ -1372,7 +1376,7 @@ local State = {
 
     -- Tab 7: Player & Settings
     WalkSpeed = 16,
-    JumpPower = 100,
+    JumpPower = 180,
     InfiniteJump = false,
     Noclip = false,
     ManualFly = false,
@@ -1444,7 +1448,7 @@ local function updateNoclipConnection()
             for _, p in ipairs(char:GetDescendants()) do
                 if p:IsA("BasePart") then
                     local n = p.Name
-                    if n == "HumanoidRootPart" or n == "UpperTorso" or n == "LowerTorso" or n == "Torso" then
+                    if n == "UpperTorso" or n == "LowerTorso" or n == "Torso" then
                         p.CanCollide = true
                     else
                         p.CanCollide = false
@@ -3452,20 +3456,44 @@ local lastInfJumpTick = 0
 local infJumpCon = UserInputService.JumpRequest:Connect(function()
     if State.InfiniteJump then
         local now = tick()
-        if now - lastInfJumpTick < 0.08 then return end
+        if now - lastInfJumpTick < 0.06 then return end
         local _, hrp, hum = getCharHrp()
         if hrp and hum and hum.Health > 0 then
             lastInfJumpTick = now
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
             local curState = hum:GetState()
             if curState == Enum.HumanoidStateType.Freefall or curState == Enum.HumanoidStateType.Jumping then
-                local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 100)
-                hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 70, 350), hrp.AssemblyLinearVelocity.Z)
+                local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 180)
+                hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 100, 350), hrp.AssemblyLinearVelocity.Z)
             end
         end
     end
 end)
 table.insert(Connections, infJumpCon)
+
+-- Smart Snappy Athletic Jump Descent (Fast Fall without Ground Interference)
+local fastFallRayParams = RaycastParams.new()
+fastFallRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local fastFallCon = RunService.Heartbeat:Connect(function(dt)
+    if not _G.TwoSkiRunning or _G.TwoSkiActiveToken ~= myToken then return end
+    if State.ManualFly or State.AutoFlyEggs then return end
+    local char, hrp, hum = getCharHrp()
+    if hrp and hum and hum.Health > 0 and char:FindFirstChild("HumanoidRootPart") then
+        if hum.FloorMaterial == Enum.Material.Air and hum:GetState() == Enum.HumanoidStateType.Freefall then
+            local currentVy = hrp.AssemblyLinearVelocity.Y
+            if currentVy < -6 then
+                fastFallRayParams.FilterDescendantsInstances = { char }
+                local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -6.5, 0), fastFallRayParams)
+                if not ray then
+                    local newVy = math.max(currentVy - (dt * 200), -175)
+                    hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, newVy, hrp.AssemblyLinearVelocity.Z)
+                end
+            end
+        end
+    end
+end)
+table.insert(Connections, fastFallCon)
 
 UIControls.Noclip = TabSettings:Toggle({
     Title = "เดินทะลุกำแพง & ทะลุภูเขา (Noclip All)",
@@ -3739,7 +3767,7 @@ task.spawn(function()
             end
             pcall(function()
                 hum.MaxSlopeAngle = 89
-                local jp = State.JumpPower or 100
+                local jp = State.JumpPower or 180
                 if not hum.UseJumpPower then
                     hum.UseJumpPower = true
                 end
@@ -4248,7 +4276,7 @@ task.spawn(function()
                     local bp = myPlot and myPlot:FindFirstChild("Baseplate")
                     local isNearPlot = false
                     if hrp and bp then
-                        isNearPlot = (hrp.Position - bp.Position).Magnitude < 100
+                        isNearPlot = (hrp.Position - bp.Position).Magnitude < 200
                     end
                     if not State.AutoFlyEggs or isNearPlot then
                         placeAllHeldEggsNow()
