@@ -903,55 +903,42 @@ local function getOpenPlacementPositions(extraOccupiedSpots)
     local plantedEggs = getPlotPlantedEggs()
     local spots = {}
 
-    local center = bp.Position + Vector3.new(0, 0.5, 0)
-    local halfX = math.clamp((bp.Size.X / 2) - 4, 10, 40)
-    local halfZ = math.clamp((bp.Size.Z / 2) - 4, 10, 40)
-
-    local nestPositions = {}
-    local nestsFolder = myPlot:FindFirstChild("Nests")
-    if nestsFolder then
-        for _, n in ipairs(nestsFolder:GetChildren()) do
-            local p = n:GetPivot().Position
-            table.insert(nestPositions, Vector3.new(p.X, 0, p.Z))
-        end
-    end
+    local posY = bp.Position.Y + (bp.Size.Y / 2) + 0.5
+    local center = Vector3.new(bp.Position.X, posY, bp.Position.Z)
+    local halfX = math.clamp((bp.Size.X / 2) - 4, 10, 34)
+    local halfZ = math.clamp((bp.Size.Z / 2) - 4, 10, 34)
 
     local function isSpotFree(pos)
         local posFlat = Vector3.new(pos.X, 0, pos.Z)
         for _, egg in ipairs(plantedEggs) do
             local pPart = egg:FindFirstChildWhichIsA("BasePart") or egg.PrimaryPart
             local pPos = pPart and pPart.Position or egg:GetPivot().Position
-            if (Vector3.new(pPos.X, 0, pPos.Z) - posFlat).Magnitude < 3.8 then
-                return false
-            end
-        end
-        for _, nPos in ipairs(nestPositions) do
-            if (nPos - posFlat).Magnitude < 4.5 then
+            if (Vector3.new(pPos.X, 0, pPos.Z) - posFlat).Magnitude < 4.2 then
                 return false
             end
         end
         if extraOccupiedSpots then
             for _, occSpot in ipairs(extraOccupiedSpots) do
-                if (Vector3.new(occSpot.X, 0, occSpot.Z) - posFlat).Magnitude < 3.8 then
+                if (Vector3.new(occSpot.X, 0, occSpot.Z) - posFlat).Magnitude < 4.2 then
                     return false
                 end
             end
         end
         for _, existingSpot in ipairs(spots) do
-            if (Vector3.new(existingSpot.X, 0, existingSpot.Z) - posFlat).Magnitude < 3.8 then
+            if (Vector3.new(existingSpot.X, 0, existingSpot.Z) - posFlat).Magnitude < 4.2 then
                 return false
             end
         end
         return true
     end
 
-    local step = 4.5
+    local step = 4.8
     for stepX = -halfX, halfX, step do
         for stepZ = -halfZ, halfZ, step do
             local candidatePos = center + Vector3.new(stepX, 0, stepZ)
             if isSpotFree(candidatePos) then
                 table.insert(spots, candidatePos)
-                if #spots >= 100 then
+                if #spots >= 120 then
                     return spots
                 end
             end
@@ -961,14 +948,14 @@ local function getOpenPlacementPositions(extraOccupiedSpots)
     return spots
 end
 
-local function placeEggOnPlot(eggTool, spot, nest)
+local function placeEggOnPlot(eggTool, spot)
     if not eggTool or not eggTool.Parent then return false end
     local char, hrp, hum = getCharHrp()
     if not char or not hum or not hrp then return false end
 
     if hum.Sit then
         hum.Sit = false
-        task.wait(0.05)
+        task.wait(0.04)
     end
 
     -- Ensure tool collision is disabled and massless so it never induces spin or physics impulse
@@ -981,17 +968,16 @@ local function placeEggOnPlot(eggTool, spot, nest)
         end
     end
 
-    local pos = spot or (nest and (nest:GetPivot().Position + Vector3.new(0, 0.5, 0)))
-    if not pos then return false end
+    if not spot then return false end
 
     -- Cleanly unequip currently held tools first to prevent tool switching deadlock
     if eggTool.Parent ~= char then
         pcall(function() hum:UnequipTools() end)
-        task.wait(0.06)
+        task.wait(0.04)
         hum:EquipTool(eggTool)
         local t0 = tick()
-        while tick() - t0 < 0.4 and eggTool.Parent ~= char and eggTool.Parent do
-            task.wait(0.04)
+        while tick() - t0 < 0.35 and eggTool.Parent ~= char and eggTool.Parent do
+            task.wait(0.03)
         end
     end
 
@@ -1004,22 +990,12 @@ local function placeEggOnPlot(eggTool, spot, nest)
         hrp.RotVelocity = Vector3.zero
     end)
 
-    if nest then
-        local nestPrompt = nest:FindFirstChild("PlacePromptAnchor", true)
-        local p = nestPrompt and (nestPrompt:FindFirstChild("Place") or nestPrompt:FindFirstChildOfClass("ProximityPrompt"))
-        if p then triggerPrompt(p, 0.08) end
-    end
-
     if Remote_EggPlaced then
         pcall(function()
-            if nest and LocalPlayer:GetAttribute("NoNest") ~= true then
-                Remote_EggPlaced:FireServer({ NestId = tostring(nest.Name) })
-            else
-                Remote_EggPlaced:FireServer({ PlantPosition = pos, NestId = nest and tostring(nest.Name) or nil })
-            end
+            Remote_EggPlaced:FireServer({ PlantPosition = spot })
         end)
     end
-    task.wait(0.25)
+    task.wait(0.18)
     return true
 end
 
@@ -1050,7 +1026,10 @@ local function autoHatchPlotEggs()
                     triggerPrompt(hp, 0.05)
                 end
                 Remote_Hatch:FireServer({ EggKey = key })
-                task.wait(0.12)
+                task.wait(0.15)
+                if State.AutoPlaceEggs then
+                    task.spawn(placeAllHeldEggsNow)
+                end
             end
         end
     end
@@ -1061,7 +1040,7 @@ local lastPlotFullTime = 0
 
 local function placeAllHeldEggsNow()
     if isPlacingEggs then return false end
-    if tick() - lastPlotFullTime < 4.0 then return false end
+    if tick() - lastPlotFullTime < 2.5 then return false end
     isPlacingEggs = true
 
     local myPlot = getMyPlot()
@@ -1073,9 +1052,6 @@ local function placeAllHeldEggsNow()
     local initialEggs = getInventoryEggs(true)
     if #initialEggs == 0 then initialEggs = getInventoryEggs(false) end
     if #initialEggs == 0 then
-        if _G.TwoSkiLoaded then
-            WindUI:Notify({ Title = "2SKI", Content = "ไม่พบไข่ในกระเป๋าสำหรับวาง!" })
-        end
         isPlacingEggs = false
         return false
     end
@@ -1084,87 +1060,72 @@ local function placeAllHeldEggsNow()
     local consecutiveFails = 0
     local recentlyPlacedSpots = {}
 
-    while _G.TwoSkiRunning do
+    while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
         local curPlot = getMyPlot()
         if not curPlot then break end
 
         local curInv = getInventoryEggs(true)
         if #curInv == 0 then curInv = getInventoryEggs(false) end
         if #curInv == 0 then
-            -- ไข่ในกระเป๋าหมดแล้ว หยุดทันที
-            break
-        end
-
-        -- 1) พยายามเลือกรังว่างก่อนเป็นอันดับแรก
-        local targetSpot = nil
-        local targetNest = nil
-
-        local emptyNests = getAllEmptyPlotNests()
-        if #emptyNests > 0 then
-            targetNest = emptyNests[1]
-            targetSpot = targetNest:GetPivot().Position + Vector3.new(0, 0.5, 0)
-        else
-            -- 2) หากไม่มีรังว่าง ให้ค้นหาพื้นที่ว่างบน Baseplate แปลง วางได้ต่อเนื่องจนกว่าแปลงจะเต็ม
-            local openSpots = getOpenPlacementPositions(recentlyPlacedSpots)
-            if #openSpots > 0 then
-                targetSpot = openSpots[1]
-            end
-        end
-
-        if not targetSpot then
-            -- ไม่มีที่ว่างเหลือแล้ว หยุดทันที
+            -- ไข่ในกระเป๋าหมดแล้ว
             break
         end
 
         local eggTool = curInv[1]
         if not eggTool or not eggTool.Parent then break end
 
+        local openSpots = getOpenPlacementPositions(recentlyPlacedSpots)
+        if #openSpots == 0 then
+            lastPlotFullTime = tick()
+            break
+        end
+
         local prevPlantedCount = #getPlotPlantedEggs()
-        local success = placeEggOnPlot(eggTool, targetSpot, targetNest)
-        
         local placedOk = false
-        if success then
-            local t0 = tick()
-            while tick() - t0 < 0.45 do
-                if not eggTool.Parent or #getPlotPlantedEggs() > prevPlantedCount then
-                    placedOk = true
-                    break
+
+        -- Try up to 3 candidate spots
+        for spotIdx = 1, math.min(#openSpots, 3) do
+            local candidateSpot = openSpots[spotIdx]
+            local success = placeEggOnPlot(eggTool, candidateSpot)
+            if success then
+                local t0 = tick()
+                while tick() - t0 < 0.45 do
+                    if not eggTool.Parent or #getPlotPlantedEggs() > prevPlantedCount then
+                        placedOk = true
+                        table.insert(recentlyPlacedSpots, candidateSpot)
+                        break
+                    end
+                    task.wait(0.04)
                 end
-                task.wait(0.04)
             end
+            if placedOk then break end
         end
 
         if placedOk then
             totalPlaced = totalPlaced + 1
             consecutiveFails = 0
-            if targetSpot then
-                table.insert(recentlyPlacedSpots, targetSpot)
-            end
-            task.wait(0.12)
+            task.wait(0.08)
         else
             consecutiveFails = consecutiveFails + 1
-            if targetSpot then
-                table.insert(recentlyPlacedSpots, targetSpot)
-            end
             if consecutiveFails >= 2 then
-                -- วางซ้ำ 2 ครั้งไม่ผ่าน แปลว่าแปลงเต็มหรือเซิร์ฟเวอร์ไม่ให้วางเพิ่มแล้ว หยุดทันที
+                -- แปลงเต็มขีดจำกัดแล้ว
                 lastPlotFullTime = tick()
                 break
             end
-            task.wait(0.2)
-        end
-    end
-
-    local totalNow = #getPlotPlantedEggs()
-    if _G.TwoSkiLoaded then
-        if totalPlaced > 0 then
-            WindUI:Notify({ Title = "2SKI", Content = "วางไข่สำเร็จ " .. tostring(totalPlaced) .. " ฟอง! (รวมในแปลง " .. tostring(totalNow) .. " ฟอง - วางจนเต็มแล้ว)" })
-        elseif consecutiveFails >= 2 then
-            WindUI:Notify({ Title = "2SKI", Content = "แปลงวางไข่เต็มแล้ว (รวมในแปลง " .. tostring(totalNow) .. " ฟอง) หยุดวางอัตโนมัติ" })
+            task.wait(0.15)
         end
     end
 
     isPlacingEggs = false
+
+    local totalNow = #getPlotPlantedEggs()
+    if _G.TwoSkiLoaded then
+        if totalPlaced > 0 then
+            WindUI:Notify({ Title = "2SKI", Content = "วางไข่สำเร็จ " .. tostring(totalPlaced) .. " ฟอง! (รวมในแปลง " .. tostring(totalNow) .. " ฟอง)" })
+        elseif consecutiveFails >= 2 then
+            WindUI:Notify({ Title = "2SKI", Content = "แปลงวางไข่เต็มแล้ว (" .. tostring(totalNow) .. " ฟอง)" })
+        end
+    end
     return totalPlaced > 0
 end
 
@@ -4182,7 +4143,10 @@ task.spawn(function()
                     local char, hrp = getCharHrp()
                     local myPlot = getMyPlot()
                     local bp = myPlot and myPlot:FindFirstChild("Baseplate")
-                    local isNearPlot = (hrp and bp) and ((hrp.Position - bp.Position).Magnitude < 85) or true
+                    local isNearPlot = false
+                    if hrp and bp then
+                        isNearPlot = (hrp.Position - bp.Position).Magnitude < 100
+                    end
                     if not State.AutoFlyEggs or isNearPlot then
                         placeAllHeldEggsNow()
                     end
