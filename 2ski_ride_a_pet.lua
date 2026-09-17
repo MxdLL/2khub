@@ -422,10 +422,15 @@ local function isOnMyPlot()
     if not hrp then return false end
     local myPlot = getMyPlot()
     if not myPlot then return false end
+    local bp = myPlot:FindFirstChild("Baseplate")
+    if bp then
+        local flatDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(bp.Position.X, 0, bp.Position.Z)).Magnitude
+        return flatDist <= 38
+    end
     local pivot = myPlot:GetPivot()
     if not pivot then return false end
-    local dist = (hrp.Position - pivot.Position).Magnitude
-    return dist <= 125
+    local flatDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(pivot.Position.X, 0, pivot.Position.Z)).Magnitude
+    return flatDist <= 42
 end
 
 local function getPetRenderer()
@@ -960,6 +965,14 @@ local function getPlotPlantedEggs()
     return list
 end
 
+local function getMaxPlotEggs()
+    return 10
+end
+
+local function isPlotFull()
+    return #getPlotPlantedEggs() >= getMaxPlotEggs()
+end
+
 local function getOpenPlacementPositions(extraOccupiedSpots)
     local myPlot = getMyPlot()
     if not myPlot then return {} end
@@ -1011,8 +1024,25 @@ end
 
 local function placeEggOnPlot(eggTool, spot)
     if not eggTool or not eggTool.Parent then return false end
+    if isPlotFull() then return false end
     local char, hrp, hum = getCharHrp()
     if not char or not hum or not hrp then return false end
+
+    -- STRICT BASE GUARD: Player MUST be on base before equipping/holding egg!
+    if not isOnMyPlot() then
+        local myPlot = getMyPlot()
+        local bp = myPlot and myPlot:FindFirstChild("Baseplate")
+        if bp then
+            local surfaceY = bp.Position.Y + (bp.Size.Y / 2) + 2.5
+            hrp.CFrame = CFrame.new(Vector3.new(bp.Position.X, surfaceY, bp.Position.Z))
+            task.wait(0.08)
+        end
+    end
+
+    if not isOnMyPlot() then
+        pcall(function() hum:UnequipTools() end)
+        return false
+    end
 
     if hum.Sit then
         hum.Sit = false
@@ -1030,17 +1060,7 @@ local function placeEggOnPlot(eggTool, spot)
 
     if not spot then return false end
 
-    -- Only reposition if player is far away from their plot (zero-lag & zero velocity reset when on plot!)
-    if not isOnMyPlot() then
-        local myPlot = getMyPlot()
-        local bp = myPlot and myPlot:FindFirstChild("Baseplate")
-        if bp then
-            local surfaceY = bp.Position.Y + (bp.Size.Y / 2) + 2.5
-            hrp.CFrame = CFrame.new(Vector3.new(bp.Position.X, surfaceY, bp.Position.Z))
-            task.wait(0.05)
-        end
-    end
-
+    -- Equip egg tool ONLY while standing safely on plot
     if eggTool.Parent ~= char then
         hum:EquipTool(eggTool)
         local t0 = tick()
@@ -1107,7 +1127,7 @@ local function autoHatchPlotEggs()
             end
         end
     end
-    if hatchedAny and State.AutoPlaceEggs then
+    if hatchedAny and State.AutoPlaceEggs and not isPlotFull() and isOnMyPlot() then
         task.spawn(placeAllHeldEggsNow)
     end
 end
@@ -1122,22 +1142,43 @@ local function placeAllHeldEggsNow()
 
     local totalPlaced = 0
     local consecutiveFails = 0
-    local maxCapacity = 10
+    local maxCapacity = getMaxPlotEggs()
 
     local ok, err = pcall(function()
         local myPlot = getMyPlot()
         if not myPlot then return end
 
-        maxCapacity = 50
-        local curPlanted = #getPlotPlantedEggs()
-        if curPlanted >= maxCapacity then
+        local char, hrp, hum = getCharHrp()
+        if not char or not hrp or not hum then return end
+
+        -- If plot is already full, unequip immediately and return
+        if isPlotFull() then
             lastPlotFullTime = tick()
+            pcall(function() hum:UnequipTools() end)
             return
         end
 
         local initialEggs = getInventoryEggs(true)
         if #initialEggs == 0 then initialEggs = getInventoryEggs(false) end
-        if #initialEggs == 0 then return end
+        if #initialEggs == 0 then
+            pcall(function() hum:UnequipTools() end)
+            return
+        end
+
+        -- STRICT BASE GUARD: Must be at base BEFORE touching any eggs
+        if not isOnMyPlot() then
+            local bp = myPlot:FindFirstChild("Baseplate")
+            if bp then
+                local surfaceY = bp.Position.Y + (bp.Size.Y / 2) + 2.5
+                hrp.CFrame = CFrame.new(Vector3.new(bp.Position.X, surfaceY, bp.Position.Z))
+                task.wait(0.1)
+            end
+        end
+
+        if not isOnMyPlot() then
+            pcall(function() hum:UnequipTools() end)
+            return
+        end
 
         local recentlyPlacedSpots = {}
 
@@ -1145,8 +1186,12 @@ local function placeAllHeldEggsNow()
             local curPlot = getMyPlot()
             if not curPlot then break end
 
-            if #getPlotPlantedEggs() >= maxCapacity then
+            if isPlotFull() then
                 lastPlotFullTime = tick()
+                break
+            end
+
+            if not isOnMyPlot() then
                 break
             end
 
@@ -1196,6 +1241,12 @@ local function placeAllHeldEggsNow()
                 task.wait(0.12)
             end
         end
+    end)
+
+    -- CLEANUP: Always unequip tools after placement loop finishes or exits!
+    pcall(function()
+        local _, _, hum = getCharHrp()
+        if hum then hum:UnequipTools() end
     end)
 
     isPlacingEggs = false
@@ -4252,7 +4303,7 @@ task.spawn(function()
                 depositBasketToBackpack()
 
                 -- Immediately place newly acquired egg on plot if AutoPlaceEggs is on!
-                if State.AutoPlaceEggs then
+                if State.AutoPlaceEggs and not isPlotFull() and isOnMyPlot() then
                     pcall(placeAllHeldEggsNow)
                 end
             end
@@ -4272,18 +4323,20 @@ task.spawn(function()
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
         if State.AutoPlaceEggs and not isPlacingEggs then
             pcall(function()
+                if isPlotFull() then
+                    local _, _, hum = getCharHrp()
+                    if hum then pcall(function() hum:UnequipTools() end) end
+                    return
+                end
                 local invEggs = getInventoryEggs(true)
                 if #invEggs == 0 then invEggs = getInventoryEggs(false) end
                 if #invEggs > 0 then
-                    local char, hrp = getCharHrp()
-                    local myPlot = getMyPlot()
-                    local bp = myPlot and myPlot:FindFirstChild("Baseplate")
-                    local isNearPlot = false
-                    if hrp and bp then
-                        isNearPlot = (hrp.Position - bp.Position).Magnitude < 300
-                    end
-                    if not State.AutoFlyEggs or isNearPlot then
+                    -- STRICT: Only place when character is physically at their plot base!
+                    if isOnMyPlot() then
                         placeAllHeldEggsNow()
+                    else
+                        local _, _, hum = getCharHrp()
+                        if hum then pcall(function() hum:UnequipTools() end) end
                     end
                 end
             end)
