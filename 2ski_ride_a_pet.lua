@@ -637,6 +637,7 @@ local function tweenFlight(targetPos, speed)
     local tw = TweenService:Create(hrp, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos) * targetRot})
     tw:Play()
     tw.Completed:Wait()
+    pcall(function() tw:Destroy() end)
 
     pcall(function()
         hrp.AssemblyLinearVelocity = Vector3.zero
@@ -1024,6 +1025,7 @@ local function autoHatchPlotEggs()
     if not Remote_Hatch then return end
     local myPlot = getMyPlot()
     if not myPlot or not myPlot:FindFirstChild("Eggs") then return end
+    local hatchedAny = false
     for _, egg in ipairs(myPlot.Eggs:GetChildren()) do
         local key = egg:GetAttribute("EggKey")
         if key then
@@ -1047,12 +1049,13 @@ local function autoHatchPlotEggs()
                     triggerPrompt(hp, 0.05)
                 end
                 Remote_Hatch:FireServer({ EggKey = key })
-                task.wait(0.15)
-                if State.AutoPlaceEggs then
-                    task.spawn(placeAllHeldEggsNow)
-                end
+                hatchedAny = true
+                task.wait(0.12)
             end
         end
+    end
+    if hatchedAny and State.AutoPlaceEggs then
+        task.spawn(placeAllHeldEggsNow)
     end
 end
 
@@ -1436,7 +1439,6 @@ local function updateNoclipConnection()
                     end
                 end
             end)
-            table.insert(Connections, noclipCon)
         end
     else
         if noclipCon then
@@ -2490,7 +2492,6 @@ local function clearEggESP()
     for egg, esp in pairs(activeESPBoxes) do
         pcall(function()
             if esp.BB then esp.BB:Destroy() end
-            if esp.HL then esp.HL:Destroy() end
         end)
     end
     table.clear(activeESPBoxes)
@@ -2567,17 +2568,7 @@ local function updateEggESP()
                         distLabel.Text = "0m"
                         distLabel.Parent = bb
 
-                        -- Optional Highlight
-                        local hl = Instance.new("Highlight")
-                        hl.Name = "EggHL"
-                        hl.Adornee = egg
-                        hl.FillColor = isRbTarget and Color3.fromRGB(255, 215, 0) or color
-                        hl.FillTransparency = isRbTarget and 0.45 or 0.65
-                        hl.OutlineColor = isRbTarget and Color3.fromRGB(255, 255, 0) or Color3.fromRGB(255, 255, 255)
-                        hl.OutlineTransparency = isRbTarget and 0.0 or 0.2
-                        hl.Parent = ESPFolder
-
-                        activeESPBoxes[egg] = { BB = bb, HL = hl, Dist = distLabel, Part = part }
+                        activeESPBoxes[egg] = { BB = bb, Dist = distLabel, Part = part }
                     else
                         local d = math.floor((part.Position - myPos).Magnitude)
                         activeESPBoxes[egg].Dist.Text = tostring(d) .. " Studs"
@@ -2592,7 +2583,6 @@ local function updateEggESP()
         if not aliveEggs[egg] or not egg.Parent then
             pcall(function()
                 if esp.BB then esp.BB:Destroy() end
-                if esp.HL then esp.HL:Destroy() end
             end)
             activeESPBoxes[egg] = nil
         end
@@ -3882,8 +3872,10 @@ local function suppressAlertObject(obj)
         end
         if isTarget then
             obj.Visible = false
-            pcall(function() obj.Position = UDim2.new(10, 0, 10, 0) end)
-            pcall(function() obj:Destroy() end)
+            pcall(function() obj.Position = UDim2.new(100, 0, 100, 0) end)
+            task.delay(1.5, function()
+                pcall(function() obj:Destroy() end)
+            end)
         end
     end)
 end
@@ -4342,6 +4334,33 @@ task.spawn(function()
                             WindUI:Notify({ Title = "2SKI Anti-Void", Content = "กู้คืนตัวละครกลับมาที่แปลงเรียบร้อย!" })
                         end
                     end
+                end
+            end
+        end)
+    end
+end)
+
+-- High-Performance Memory & Anti-Crash Guardian (Zero Memory Leaks & 24/7 Stability)
+task.spawn(function()
+    while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
+        task.wait(45)
+        pcall(function()
+            local now = tick()
+            for k, t in pairs(petSwapCooldown) do
+                if now - t > 30 then
+                    petSwapCooldown[k] = nil
+                end
+            end
+            if ESPFolder then
+                for _, item in ipairs(ESPFolder:GetChildren()) do
+                    if item:IsA("BillboardGui") and (not item.Adornee or not item.Adornee.Parent) then
+                        pcall(function() item:Destroy() end)
+                    end
+                end
+            end
+            for part in pairs(originalCollisions) do
+                if not part.Parent then
+                    originalCollisions[part] = nil
                 end
             end
         end)
