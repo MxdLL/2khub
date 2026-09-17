@@ -1241,14 +1241,6 @@ local function placeAllHeldEggsNow()
         end
     end)
 
-    -- CLEANUP: Only unequip tools if we were actually on plot placing eggs
-    if isOnMyPlot() then
-        pcall(function()
-            local _, _, hum = getCharHrp()
-            if hum then hum:UnequipTools() end
-        end)
-    end
-
     isPlacingEggs = false
 
     local totalNow = #getPlotPlantedEggs()
@@ -4240,32 +4232,34 @@ task.spawn(function()
             ensureFlightHold(hrp)
 
             -- Gentle Low-Altitude Corridor: only 5 studs above ground (Zero rocket-high flights!)
-            local startPos = hrp.Position
-            local cruisingY = math.max(startPos.Y, targetEggPos.Y) + 5
-
-            -- Ascend slightly if lower than cruising altitude
-            if startPos.Y < cruisingY - 2 then
-                tweenFlight(Vector3.new(startPos.X, cruisingY, startPos.Z), State.FlySpeed * 1.4)
-            end
-
-            -- Fly horizontally across smoothly directly over egg
-            tweenFlight(Vector3.new(targetEggPos.X, cruisingY, targetEggPos.Z), State.FlySpeed * 1.25)
-
-            -- Descend right onto the egg (1.8 studs)
-            tweenFlight(targetEggPos, State.FlySpeed * 1.35)
+            -- Direct Straight-Line Flight to Egg (No vertical elevator detour, fly straight across!)
+            tweenFlight(targetEggPos, State.FlySpeed * 1.3)
             task.wait(0.02)
 
-            -- Pickup confirmation: actively ensure egg enters Basket or is grabbed into character
+            -- Single Clean Pickup Interaction (Prevents spam-drop/release glitch)
             local prompt = closestEgg:FindFirstChildWhichIsA("ProximityPrompt", true)
             local targetUuid = candidates[1] and candidates[1].eggUuid
             local basket = LocalPlayer:FindFirstChild("Basket")
             local prevBasketCount = basket and #basket:GetChildren() or 0
 
+            local function checkEggAcquired()
+                if not closestEgg or not closestEgg.Parent then return true end
+                if basket and #basket:GetChildren() > prevBasketCount then return true end
+                local curChar = LocalPlayer.Character
+                if curChar then
+                    for _, it in ipairs(curChar:GetChildren()) do
+                        if it:IsA("Tool") and (it.Name:find("Egg") or it:GetAttribute("Egg") or it:GetAttribute("IsEgg")) then
+                            return true
+                        end
+                    end
+                end
+                return false
+            end
+
             local pickupSuccess = false
-            local t0 = tick()
-            while tick() - t0 < 0.55 do
+            for attempt = 1, 2 do
                 if prompt and prompt.Enabled then
-                    triggerPrompt(prompt, 0.04)
+                    triggerPrompt(prompt, 0.05)
                 end
                 if Remote_EggPickup then
                     if targetUuid then
@@ -4274,20 +4268,8 @@ task.spawn(function()
                         pcall(function() Remote_EggPickup:FireServer(closestEgg.Name) end)
                     end
                 end
-                task.wait(0.03)
-
-                local hasEggInChar = false
-                local curChar = LocalPlayer.Character
-                if curChar then
-                    for _, it in ipairs(curChar:GetChildren()) do
-                        if it:IsA("Tool") and (it.Name:find("Egg") or it:GetAttribute("Egg") or it:GetAttribute("IsEgg")) then
-                            hasEggInChar = true
-                            break
-                        end
-                    end
-                end
-
-                if not closestEgg.Parent or (basket and #basket:GetChildren() > prevBasketCount) or hasEggInChar then
+                task.wait(0.12)
+                if checkEggAcquired() then
                     pickupSuccess = true
                     break
                 end
@@ -4305,23 +4287,14 @@ task.spawn(function()
                 end
             end
 
-            -- Only fly back to plot if basket actually contains an egg or pickup succeeded or egg tool is held!
+            -- Direct Straight-Line Flight back to baseplate
             if hasBasketEgg or hasHeldEgg or pickupSuccess then
                 local myPlot = getMyPlot()
                 local baseplate = myPlot and myPlot:FindFirstChild("Baseplate")
                 local basePos = baseplate and (baseplate.Position + Vector3.new(0, 2.8, 0)) or (getPlotCenterPos() or Vector3.new(172, 40316, 1067))
-                local returnCruisingY = math.max(hrp.Position.Y, basePos.Y) + 5
 
-                -- Ascend slightly to return cruising altitude
-                if hrp.Position.Y < returnCruisingY - 2 then
-                    tweenFlight(Vector3.new(hrp.Position.X, returnCruisingY, hrp.Position.Z), State.FlySpeed * 1.4)
-                end
-
-                -- Fly horizontally across back to plot
-                tweenFlight(Vector3.new(basePos.X, returnCruisingY, basePos.Z), State.FlySpeed * 1.25)
-
-                -- Descend smoothly onto baseplate
-                tweenFlight(basePos, State.FlySpeed * 1.35)
+                -- Fly DIRECTLY in a straight line back to plot (Zero vertical elevator detour!)
+                tweenFlight(basePos, State.FlySpeed * 1.3)
                 task.wait(0.03)
 
                 -- Deposit into backpack cleanly (waits until basket is confirmed empty!)
@@ -4383,7 +4356,7 @@ end)
 task.spawn(function()
     local lastRescueNoticeTime = 0
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
-        task.wait(0.15)
+        task.wait(0.4)
         pcall(function()
             local char, hrp, hum = getCharHrp()
             if hrp and hum and hum.Health > 0 and char:FindFirstChild("HumanoidRootPart") then
@@ -4422,7 +4395,7 @@ end)
 -- High-Performance Memory & Anti-Crash Guardian (Zero Memory Leaks & 24/7 Stability)
 task.spawn(function()
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
-        task.wait(45)
+        task.wait(30)
         pcall(function()
             local now = tick()
             for k, t in pairs(petSwapCooldown) do
@@ -4442,6 +4415,12 @@ task.spawn(function()
                     originalCollisions[part] = nil
                 end
             end
+            -- Garbage collection sweep: release unreferenced Lua tables, strings, and temporary objects
+            pcall(function()
+                if collectgarbage then
+                    collectgarbage("collect")
+                end
+            end)
         end)
     end
 end)
