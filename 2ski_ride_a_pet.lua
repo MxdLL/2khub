@@ -3460,24 +3460,25 @@ local function hookHumanoidJump(hum)
     end)
 end
 
-local _, _, initHum = getCharHrp()
-if initHum then hookHumanoidJump(initHum) end
+do
+    local _, _, initHum = getCharHrp()
+    if initHum then hookHumanoidJump(initHum) end
 
-local lastInfJumpTick = 0
-local infJumpCon = UserInputService.JumpRequest:Connect(function()
-    if State.InfiniteJump then
-        local now = tick()
-        if now - lastInfJumpTick < 0.05 then return end
-        local _, hrp, hum = getCharHrp()
-        if hrp and hum and hum.Health > 0 then
-            lastInfJumpTick = now
-            hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
-            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
+    local lastInfJumpTick = 0
+    table.insert(Connections, UserInputService.JumpRequest:Connect(function()
+        if State.InfiniteJump then
+            local now = tick()
+            if now - lastInfJumpTick < 0.05 then return end
+            local _, hrp, hum = getCharHrp()
+            if hrp and hum and hum.Health > 0 then
+                lastInfJumpTick = now
+                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
+                hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
+            end
         end
-    end
-end)
-table.insert(Connections, infJumpCon)
+    end))
+end
 
 UIControls.Noclip = TabSettings:Toggle({
     Title = "เดินทะลุกำแพง & ทะลุภูเขา (Noclip All)",
@@ -3507,7 +3508,7 @@ UIControls.ManualFlySpeed = TabSettings:Slider({
     Callback = function(val) State.ManualFlySpeed = val end
 })
 
-local flyKeyCon = UserInputService.InputBegan:Connect(function(input, gpe)
+table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.F then
         State.ManualFly = not State.ManualFly
@@ -3523,8 +3524,7 @@ local flyKeyCon = UserInputService.InputBegan:Connect(function(input, gpe)
             })
         end
     end
-end)
-table.insert(Connections, flyKeyCon)
+end))
 
 UIControls.AntiAfk = TabSettings:Toggle({
     Title = "ป้องกันการหลุดอัตโนมัติ (Anti-AFK 24/7)",
@@ -3771,9 +3771,9 @@ task.spawn(function()
 end)
 
 -- Loop 2: Instant Auto Upgrades (Strict Balance Check & Adaptive Sleep)
-local lastLuckUpgradeTime = 0
-local lastNestUpgradeTime = 0
 task.spawn(function()
+    local lastLuckUpgradeTime = 0
+    local lastNestUpgradeTime = 0
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
         if not (State.AutoUpgradeAll or State.AutoUpgradeLuck or State.AutoUpgradeNests) then
             task.wait(1.5)
@@ -4295,8 +4295,8 @@ task.spawn(function()
 end)
 
 -- Anti-Void & Map-Fall Guardian (Permits Desert Underground Caves down to Y=40200, Only Catches True Void Drops!)
-local lastRescueNoticeTime = 0
 task.spawn(function()
+    local lastRescueNoticeTime = 0
     while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
         task.wait(0.15)
         pcall(function()
