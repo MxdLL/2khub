@@ -996,14 +996,16 @@ local function placeEggOnPlot(eggTool, spot)
         hrp.RotVelocity = Vector3.zero
     end)
 
-    -- Cleanly unequip currently held tools first to prevent tool switching deadlock
+    -- Cleanly equip tool directly without unequip deadlock
     if eggTool.Parent ~= char then
-        pcall(function() hum:UnequipTools() end)
-        task.wait(0.04)
         hum:EquipTool(eggTool)
         local t0 = tick()
-        while tick() - t0 < 0.35 and eggTool.Parent ~= char and eggTool.Parent do
-            task.wait(0.03)
+        while tick() - t0 < 0.25 and eggTool.Parent ~= char and eggTool.Parent do
+            task.wait(0.02)
+        end
+        if eggTool.Parent ~= char and eggTool.Parent then
+            pcall(function() eggTool.Parent = char end)
+            task.wait(0.04)
         end
     end
 
@@ -1064,7 +1066,7 @@ local lastPlotFullTime = 0
 
 local function placeAllHeldEggsNow()
     if isPlacingEggs then return false end
-    if tick() - lastPlotFullTime < 2.0 then return false end
+    if tick() - lastPlotFullTime < 1.5 then return false end
     isPlacingEggs = true
 
     local totalPlaced = 0
@@ -1114,19 +1116,18 @@ local function placeAllHeldEggsNow()
             local prevPlantedCount = #getPlotPlantedEggs()
             local placedOk = false
 
-            -- Try candidate spots
-            for spotIdx = 1, math.min(#openSpots, 4) do
+            for spotIdx = 1, math.min(#openSpots, 3) do
                 local candidateSpot = openSpots[spotIdx]
                 local success = placeEggOnPlot(eggTool, candidateSpot)
                 if success then
                     local t0 = tick()
-                    while tick() - t0 < 0.45 do
+                    while tick() - t0 < 0.35 do
                         if not eggTool.Parent or #getPlotPlantedEggs() > prevPlantedCount then
                             placedOk = true
                             table.insert(recentlyPlacedSpots, candidateSpot)
                             break
                         end
-                        task.wait(0.04)
+                        task.wait(0.03)
                     end
                 end
                 if placedOk then break end
@@ -1139,11 +1140,10 @@ local function placeAllHeldEggsNow()
             else
                 consecutiveFails = consecutiveFails + 1
                 if consecutiveFails >= 3 then
-                    -- แปลงเต็มขีดจำกัดแล้ว หรือเซิร์ฟเวอร์ปฏิเสธ
                     lastPlotFullTime = tick()
                     break
                 end
-                task.wait(0.15)
+                task.wait(0.12)
             end
         end
     end)
@@ -3445,6 +3445,24 @@ UIControls.InfiniteJump = TabSettings:Toggle({
     Callback = function(val) State.InfiniteJump = val end
 })
 
+local function hookHumanoidJump(hum)
+    if not hum then return end
+    pcall(function()
+        hum.StateChanged:Connect(function(oldState, newState)
+            if newState == Enum.HumanoidStateType.Jumping then
+                local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
+                local char, hrp = getCharHrp()
+                if hrp then
+                    hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
+                end
+            end
+        end)
+    end)
+end
+
+local _, _, initHum = getCharHrp()
+if initHum then hookHumanoidJump(initHum) end
+
 local lastInfJumpTick = 0
 local infJumpCon = UserInputService.JumpRequest:Connect(function()
     if State.InfiniteJump then
@@ -3454,36 +3472,12 @@ local infJumpCon = UserInputService.JumpRequest:Connect(function()
         if hrp and hum and hum.Health > 0 then
             lastInfJumpTick = now
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 180)
-            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 100, 350), hrp.AssemblyLinearVelocity.Z)
+            local jp = (State.JumpPower and State.JumpPower > 50) and State.JumpPower or 180
+            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, jp, hrp.AssemblyLinearVelocity.Z)
         end
     end
 end)
 table.insert(Connections, infJumpCon)
-
--- Smart Snappy Athletic Jump Descent (Fast Fall without Ground Interference)
-local fastFallRayParams = RaycastParams.new()
-fastFallRayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local fastFallCon = RunService.Heartbeat:Connect(function(dt)
-    if not _G.TwoSkiRunning or _G.TwoSkiActiveToken ~= myToken then return end
-    if State.ManualFly or State.AutoFlyEggs then return end
-    local char, hrp, hum = getCharHrp()
-    if hrp and hum and hum.Health > 0 and char:FindFirstChild("HumanoidRootPart") then
-        if hum.FloorMaterial == Enum.Material.Air and hum:GetState() == Enum.HumanoidStateType.Freefall then
-            local currentVy = hrp.AssemblyLinearVelocity.Y
-            if currentVy < -2 then
-                fastFallRayParams.FilterDescendantsInstances = { char }
-                local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -3.2, 0), fastFallRayParams)
-                if not ray then
-                    local newVy = math.max(currentVy - (dt * 260), -220)
-                    hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, newVy, hrp.AssemblyLinearVelocity.Z)
-                end
-            end
-        end
-    end
-end)
-table.insert(Connections, fastFallCon)
 
 UIControls.Noclip = TabSettings:Toggle({
     Title = "เดินทะลุกำแพง & ทะลุภูเขา (Noclip All)",
@@ -3588,13 +3582,13 @@ end
 
 local charAddedCon = LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid", 5) or char:FindFirstChildOfClass("Humanoid")
-    if hum then syncSpeedToHumanoid(hum) end
+    if hum then syncSpeedToHumanoid(hum); hookHumanoidJump(hum) end
     if State.Noclip then updateNoclipConnection() end
 end)
 table.insert(Connections, charAddedCon)
 if LocalPlayer.Character then
     local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if hum then syncSpeedToHumanoid(hum) end
+    if hum then syncSpeedToHumanoid(hum); hookHumanoidJump(hum) end
 end
 
 
