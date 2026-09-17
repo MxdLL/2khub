@@ -2754,6 +2754,9 @@ UIControls.AutoPlaceEggs = TabEgg:Toggle({
     Value = State.AutoPlaceEggs,
     Callback = function(val)
         State.AutoPlaceEggs = val
+        if val then
+            task.spawn(placeAllHeldEggsNow)
+        end
         if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = val and "เปิดระบบวางไข่ลงแปลงอัตโนมัติ (วางจนเต็มแปลง)!" or "ปิดระบบวางไข่อัตโนมัติ" }) end
     end
 })
@@ -3456,16 +3459,13 @@ local lastInfJumpTick = 0
 local infJumpCon = UserInputService.JumpRequest:Connect(function()
     if State.InfiniteJump then
         local now = tick()
-        if now - lastInfJumpTick < 0.06 then return end
+        if now - lastInfJumpTick < 0.05 then return end
         local _, hrp, hum = getCharHrp()
         if hrp and hum and hum.Health > 0 then
             lastInfJumpTick = now
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            local curState = hum:GetState()
-            if curState == Enum.HumanoidStateType.Freefall or curState == Enum.HumanoidStateType.Jumping then
-                local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 180)
-                hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 100, 350), hrp.AssemblyLinearVelocity.Z)
-            end
+            local jPower = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or (hum.JumpPower > 0 and hum.JumpPower or 180)
+            hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(jPower, 100, 350), hrp.AssemblyLinearVelocity.Z)
         end
     end
 end)
@@ -3482,11 +3482,11 @@ local fastFallCon = RunService.Heartbeat:Connect(function(dt)
     if hrp and hum and hum.Health > 0 and char:FindFirstChild("HumanoidRootPart") then
         if hum.FloorMaterial == Enum.Material.Air and hum:GetState() == Enum.HumanoidStateType.Freefall then
             local currentVy = hrp.AssemblyLinearVelocity.Y
-            if currentVy < -6 then
+            if currentVy < -2 then
                 fastFallRayParams.FilterDescendantsInstances = { char }
-                local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -6.5, 0), fastFallRayParams)
+                local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -3.2, 0), fastFallRayParams)
                 if not ray then
-                    local newVy = math.max(currentVy - (dt * 200), -175)
+                    local newVy = math.max(currentVy - (dt * 260), -220)
                     hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, newVy, hrp.AssemblyLinearVelocity.Z)
                 end
             end
@@ -3767,16 +3767,22 @@ task.spawn(function()
             end
             pcall(function()
                 hum.MaxSlopeAngle = 89
-                local jp = State.JumpPower or 180
+                hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+                hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+                local jp = (State.JumpPower and State.JumpPower > 0) and State.JumpPower or 180
                 if not hum.UseJumpPower then
                     hum.UseJumpPower = true
                 end
                 if math.abs(hum.JumpPower - jp) > 1 then
                     hum.JumpPower = jp
                 end
+                local targetH = math.clamp((jp * jp) / (2 * 196.2), 7.2, 120)
+                if math.abs(hum.JumpHeight - targetH) > 1 then
+                    hum.JumpHeight = targetH
+                end
             end)
         end
-        task.wait(targetSpeed and 0.25 or 0.4)
+        task.wait(targetSpeed and 0.15 or 0.3)
     end
 end)
 
@@ -4276,16 +4282,16 @@ task.spawn(function()
                     local bp = myPlot and myPlot:FindFirstChild("Baseplate")
                     local isNearPlot = false
                     if hrp and bp then
-                        isNearPlot = (hrp.Position - bp.Position).Magnitude < 200
+                        isNearPlot = (hrp.Position - bp.Position).Magnitude < 300
                     end
                     if not State.AutoFlyEggs or isNearPlot then
                         placeAllHeldEggsNow()
                     end
                 end
             end)
-            task.wait(1.5)
+            task.wait(0.8)
         else
-            task.wait(1.5)
+            task.wait(1.0)
         end
     end
 end)
