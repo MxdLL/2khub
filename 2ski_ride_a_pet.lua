@@ -2095,6 +2095,9 @@ local function loadConfig(silent)
         if ok and data then
             local okDecode, parsed = pcall(function() return HttpService:JSONDecode(data) end)
             if okDecode and type(parsed) == "table" then
+                if silent and parsed.AutoLoadConfig ~= true then
+                    return false
+                end
                 if parsed.AutoPlaceEgg ~= nil and parsed.AutoPlaceEggs == nil then
                     parsed.AutoPlaceEggs = parsed.AutoPlaceEgg
                 end
@@ -3580,6 +3583,22 @@ TabSettings:Button({
 TabSettings:Button({
     Title = "โหลดการตั้งค่าจากเครื่อง (Load Config)",
     Callback = function() loadConfig(false) end
+})
+
+TabSettings:Button({
+    Title = "รีเซ็ตการตั้งค่าเป็นค่าเริ่มต้น (Reset to Default)",
+    Callback = function()
+        pcall(function()
+            if delfile and isfile and isfile(CONFIG_FILE) then
+                delfile(CONFIG_FILE)
+            elseif writefile then
+                writefile(CONFIG_FILE, "{}")
+            end
+        end)
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            WindUI:Notify({ Title = "2SKI", Content = "ลบไฟล์ Config และรีเซ็ตเป็นค่าเริ่มต้นเรียบร้อย!" })
+        end
+    end
 })
 
 UIControls.AutoLoadConfig = TabSettings:Toggle({
