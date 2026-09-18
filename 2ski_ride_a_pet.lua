@@ -168,7 +168,7 @@ local State = {
     PlaceEggRarityFilter = {},
     MinEggWeight = "0 KG+ (ไม่จำกัด)",
     PrioritizeHeaviestEgg = false,
-    FlySpeed = 400,
+    FlySpeed = 190,
     TargetEggs = {},
     RarityFilter = {},
     AutoHatch = false,
@@ -712,6 +712,33 @@ local function tweenFlight(targetPos, speed)
         hrp.RotVelocity = Vector3.zero
     end)
     ensureFlightHold(hrp)
+    return true
+end
+
+local function smoothFlyTo(targetPos, speed)
+    local _, hrp = getCharHrp()
+    if not hrp then return false end
+    speed = speed or math.clamp(State.FlySpeed or 190, 80, 220)
+    local startPos = hrp.Position
+    local dist = (startPos - targetPos).Magnitude
+    if dist < 1.0 then return true end
+
+    -- Safe terrain clearance height (clears all hills and obstacles smoothly without clipping)
+    local minSafeY = 40385
+    local needElevation = (startPos.Y < minSafeY or targetPos.Y < minSafeY) and dist > 90
+
+    if needElevation then
+        -- Forward-climbing waypoint at safe altitude (smooth angled arc, NO stopping, NO 90-degree vertical elevator!)
+        local midX = (startPos.X + targetPos.X) / 2
+        local midZ = (startPos.Z + targetPos.Z) / 2
+        local peakY = math.max(startPos.Y, targetPos.Y, minSafeY)
+        local waypoint = Vector3.new(midX, peakY, midZ)
+
+        tweenFlight(waypoint, speed)
+        tweenFlight(targetPos, speed)
+    else
+        tweenFlight(targetPos, speed)
+    end
     return true
 end
 
@@ -2788,8 +2815,9 @@ TabEgg:Button({
 
 UIControls.FlySpeed = TabEgg:Slider({
     Title = "ความเร็วในการบิน (Fly Speed)",
-    Step = 10,
-    Value = { Min = 50, Max = 750, Default = 400 },
+    Description = "ความเร็วปลอดภัย 180-220 Studs/s (ไม่โดนตรวจจับไข่หลุดมือ)",
+    Step = 5,
+    Value = { Min = 50, Max = 240, Default = math.clamp(State.FlySpeed or 190, 50, 240) },
     Callback = function(val) State.FlySpeed = val end
 })
 
@@ -4207,10 +4235,33 @@ task.spawn(function()
                     if part then
                         local d = (part.Position - hrp.Position).Magnitude
                         local ae, realW, shownKG = getActiveEggInfo(egg)
+                        local eggUuid = ae and ae.Name
+                        if not eggUuid then
+                            local prompt = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            if prompt and getconnections then
+                                pcall(function()
+                                    for _, c in ipairs(getconnections(prompt.Triggered)) do
+                                        if c.Function and getupvalues then
+                                            for _, u in pairs(getupvalues(c.Function)) do
+                                                if typeof(u) == "Instance" and u.Parent and u.Parent.Name == "ActiveEggs" then
+                                                    eggUuid = u.Name
+                                                    ae = u
+                                                    break
+                                                elseif type(u) == "string" and #u > 20 and u:find("-") then
+                                                    eggUuid = u
+                                                    break
+                                                end
+                                            end
+                                        end
+                                        if eggUuid then break end
+                                    end
+                                end)
+                            end
+                        end
                         table.insert(candidates, {
                             egg = egg,
                             activeEgg = ae,
-                            eggUuid = ae and ae.Name,
+                            eggUuid = eggUuid,
                             part = part,
                             dist = d,
                             weight = realW,
@@ -4256,14 +4307,32 @@ task.spawn(function()
             updateNoclipConnection()
             ensureFlightHold(hrp)
 
-            -- Gentle Low-Altitude Corridor: only 5 studs above ground (Zero rocket-high flights!)
-            -- Direct Straight-Line Flight to Egg (No vertical elevator detour, fly straight across!)
-            tweenFlight(targetEggPos, State.FlySpeed * 1.3)
+            -- Aerodynamic Smooth Flight to Egg (No vertical elevator detour, clears terrain without clipping!)
+            local outboundSpeed = math.clamp(State.FlySpeed or 190, 80, 230)
+            smoothFlyTo(targetEggPos, outboundSpeed)
             task.wait(0.02)
 
             -- Single Clean Pickup Interaction (Prevents spam-drop/release glitch)
             local prompt = closestEgg:FindFirstChildWhichIsA("ProximityPrompt", true)
             local targetUuid = candidates[1] and candidates[1].eggUuid
+            if not targetUuid and prompt and getconnections then
+                pcall(function()
+                    for _, c in ipairs(getconnections(prompt.Triggered)) do
+                        if c.Function and getupvalues then
+                            for _, u in pairs(getupvalues(c.Function)) do
+                                if typeof(u) == "Instance" and u.Parent and u.Parent.Name == "ActiveEggs" then
+                                    targetUuid = u.Name
+                                    break
+                                elseif type(u) == "string" and #u > 20 and u:find("-") then
+                                    targetUuid = u
+                                    break
+                                end
+                            end
+                        end
+                        if targetUuid then break end
+                    end
+                end)
+            end
             local basket = LocalPlayer:FindFirstChild("Basket")
             local prevBasketCount = basket and #basket:GetChildren() or 0
 
@@ -4286,12 +4355,8 @@ task.spawn(function()
                 if prompt and prompt.Enabled then
                     triggerPrompt(prompt, 0.05)
                 end
-                if Remote_EggPickup then
-                    if targetUuid then
-                        pcall(function() Remote_EggPickup:FireServer(targetUuid) end)
-                    else
-                        pcall(function() Remote_EggPickup:FireServer(closestEgg.Name) end)
-                    end
+                if Remote_EggPickup and targetUuid then
+                    pcall(function() Remote_EggPickup:FireServer(targetUuid) end)
                 end
                 task.wait(0.12)
                 if checkEggAcquired() then
@@ -4312,16 +4377,16 @@ task.spawn(function()
                 end
             end
 
-            -- Direct Straight-Line Flight back to baseplate
+            -- Return Flight back to baseplate (safe speed to prevent server speed-check from dropping egg!)
             if hasBasketEgg or hasHeldEgg or pickupSuccess then
                 local myPlot = getMyPlot()
                 local baseplate = myPlot and myPlot:FindFirstChild("Baseplate")
                 local basePos = baseplate and (baseplate.Position + Vector3.new(0, 2.8, 0)) or (getPlotCenterPos() or Vector3.new(172, 40316, 1067))
 
-                -- Fly DIRECTLY in a straight line back to plot at high speed (Prevents 22s timer expiration!)
-                local returnSpeed = math.max((State.FlySpeed or 350) * 1.5, 450)
-                tweenFlight(basePos, returnSpeed)
-                task.wait(0.02)
+                -- Safe return speed capped to 220 studs/s (Kitsune max is 240, so 190-220 is 100% undetected!)
+                local returnSpeed = math.clamp(State.FlySpeed or 190, 80, 220)
+                smoothFlyTo(basePos, returnSpeed)
+                task.wait(0.04)
 
                 -- 1. Deposit basket egg directly into backpack (Satchel) immediately!
                 depositBasketToBackpack()
