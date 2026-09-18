@@ -4192,31 +4192,11 @@ task.spawn(function()
         -- 1. Try to hatch any ready eggs first to open slots!
         pcall(autoHatchPlotEggs)
 
-        -- 2. GUARD: If plot is full (10/10), DO NOT FLY OUT!
-        -- Wild map eggs CANNOT be banked in backpack. If brought to a full base, the 22s timer expires
-        -- and the server forces "Your Egg Was Returned" back to the wild.
-        if isPlotFull() then
-            releaseFlightHold()
-            if tick() - lastFullPlotNotice > 30 then
-                lastFullPlotNotice = tick()
-                pcall(function()
-                    if WindUI and WindUI.Notify then
-                        WindUI:Notify({
-                            Title = "2SKI Farm",
-                            Content = "แปลงไข่เต็มแล้ว (" .. tostring(#getPlotPlantedEggs()) .. "/10 ฟอง) รอไข่ในแปลงฟักก่อนบินไปเก็บใหม่..."
-                        })
-                    end
-                end)
-            end
-            task.wait(1.5)
-            continue
-        end
-
-        -- Place any leftover basket egg onto plot before flying out
+        -- Bank any leftover basket egg to backpack before flying out
         local curBasket = LocalPlayer:FindFirstChild("Basket")
         if curBasket and #curBasket:GetChildren() > 0 then
-            pcall(placeBasketEggOnPlot)
-            task.wait(0.12)
+            depositBasketToBackpack()
+            task.wait(0.08)
         end
 
         local candidates = {}
@@ -4340,22 +4320,19 @@ task.spawn(function()
                 local baseplate = myPlot and myPlot:FindFirstChild("Baseplate")
                 local basePos = baseplate and (baseplate.Position + Vector3.new(0, 2.8, 0)) or (getPlotCenterPos() or Vector3.new(172, 40316, 1067))
 
-                -- Fly DIRECTLY in a straight line back to plot (Zero vertical elevator detour!)
-                tweenFlight(basePos, State.FlySpeed * 1.3)
-                task.wait(0.03)
+                -- Fly DIRECTLY in a straight line back to plot at high speed (Prevents 22s timer expiration!)
+                local returnSpeed = math.max((State.FlySpeed or 350) * 1.5, 450)
+                tweenFlight(basePos, returnSpeed)
+                task.wait(0.02)
 
-                -- 1. Try to hatch any egg that became ready during flight
+                -- 1. Deposit basket egg directly into backpack (Satchel) immediately!
+                depositBasketToBackpack()
+
+                -- 2. Try to hatch any egg that became ready during flight
                 pcall(autoHatchPlotEggs)
                 task.wait(0.04)
 
-                -- 2. Place basket egg directly onto an open plot spot before the 22s timer expires!
-                local cBasket = LocalPlayer:FindFirstChild("Basket")
-                if cBasket and #cBasket:GetChildren() > 0 and not isPlotFull() then
-                    placeBasketEggOnPlot()
-                    task.wait(0.08)
-                end
-
-                -- 3. Also place any backpack egg tools if AutoPlaceEggs is enabled
+                -- 3. Also place any backpack egg tools if AutoPlaceEggs is enabled and plot has room
                 if State.AutoPlaceEggs and not isPlotFull() and isOnMyPlot() then
                     pcall(placeAllHeldEggsNow)
                 end
