@@ -1271,8 +1271,6 @@ local function placeAllHeldEggsNow()
         pcall(function()
             if totalPlaced > 0 then
                 if WindUI and WindUI.Notify then WindUI:Notify({ Title = "2SKI", Content = "วางไข่สำเร็จ " .. tostring(totalPlaced) .. " ฟอง! (รวมในแปลง " .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" }) end
-            elseif consecutiveFails >= 3 or totalNow >= maxCapacity then
-                if WindUI and WindUI.Notify then WindUI:Notify({ Title = "2SKI", Content = "แปลงวางไข่เต็มแล้ว (" .. tostring(totalNow) .. "/" .. tostring(maxCapacity) .. " ฟอง)" }) end
             end
         end)
     end
