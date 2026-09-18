@@ -168,7 +168,7 @@ local State = {
     PlaceEggRarityFilter = {},
     MinEggWeight = "0 KG+ (ไม่จำกัด)",
     PrioritizeHeaviestEgg = false,
-    FlySpeed = 190,
+    FlySpeed = 275,
     TargetEggs = {},
     RarityFilter = {},
     AutoHatch = false,
@@ -718,7 +718,7 @@ end
 local function smoothFlyTo(targetPos, speed)
     local _, hrp = getCharHrp()
     if not hrp then return false end
-    speed = speed or math.clamp(State.FlySpeed or 190, 80, 220)
+    speed = speed or math.clamp(State.FlySpeed or 275, 80, 320)
     local startPos = hrp.Position
     local dist = (startPos - targetPos).Magnitude
     if dist < 1.0 then return true end
@@ -2815,9 +2815,9 @@ TabEgg:Button({
 
 UIControls.FlySpeed = TabEgg:Slider({
     Title = "ความเร็วในการบิน (Fly Speed)",
-    Description = "ความเร็วปลอดภัย 180-220 Studs/s (ไม่โดนตรวจจับไข่หลุดมือ)",
+    Description = "แนะนำ 250-300 Studs/s (บินเร็ว คล่องตัว และไม่หลุดมือ)",
     Step = 5,
-    Value = { Min = 50, Max = 240, Default = math.clamp(State.FlySpeed or 190, 50, 240) },
+    Value = { Min = 80, Max = 350, Default = math.clamp(State.FlySpeed or 275, 80, 350) },
     Callback = function(val) State.FlySpeed = val end
 })
 
@@ -4308,7 +4308,7 @@ task.spawn(function()
             ensureFlightHold(hrp)
 
             -- Aerodynamic Smooth Flight to Egg (No vertical elevator detour, clears terrain without clipping!)
-            local outboundSpeed = math.clamp(State.FlySpeed or 190, 80, 230)
+            local outboundSpeed = math.clamp(State.FlySpeed or 275, 80, 340)
             smoothFlyTo(targetEggPos, outboundSpeed)
             task.wait(0.02)
 
@@ -4383,8 +4383,8 @@ task.spawn(function()
                 local baseplate = myPlot and myPlot:FindFirstChild("Baseplate")
                 local basePos = baseplate and (baseplate.Position + Vector3.new(0, 2.8, 0)) or (getPlotCenterPos() or Vector3.new(172, 40316, 1067))
 
-                -- Safe return speed capped to 220 studs/s (Kitsune max is 240, so 190-220 is 100% undetected!)
-                local returnSpeed = math.clamp(State.FlySpeed or 190, 80, 220)
+                -- Safe return speed with optimal sweet spot (275-320 studs/s, fast without clipping or drop)
+                local returnSpeed = math.clamp(State.FlySpeed or 275, 80, 320)
                 smoothFlyTo(basePos, returnSpeed)
                 task.wait(0.04)
 
