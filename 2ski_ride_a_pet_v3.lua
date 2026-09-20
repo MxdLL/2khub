@@ -170,6 +170,8 @@ local State = {
     MinEggWeight = "0 KG+ (ไม่จำกัด)",
     PrioritizeHeaviestEgg = false,
     FlySpeed = 275,
+    FlyAltitudeMode = "Underground (มุดใต้ดินล่องหน - ไม่หลุดมือ)",
+    UndergroundDepth = 15,
     TargetEggs = {},
     RarityFilter = {},
     AutoHatch = false,
@@ -740,21 +742,54 @@ local function smoothFlyTo(targetPos, speed)
     local dist = (startPos - targetPos).Magnitude
     if dist < 1.0 then return true end
 
-    -- Safe terrain clearance height (clears all hills and obstacles smoothly without clipping)
-    local minSafeY = 40385
-    local needElevation = (startPos.Y < minSafeY or targetPos.Y < minSafeY) and dist > 90
+    local mode = State.FlyAltitudeMode or "Underground (มุดใต้ดินล่องหน - ไม่หลุดมือ)"
 
-    if needElevation then
-        -- Forward-climbing waypoint at safe altitude (smooth angled arc, NO stopping, NO 90-degree vertical elevator!)
-        local midX = (startPos.X + targetPos.X) / 2
-        local midZ = (startPos.Z + targetPos.Z) / 2
-        local peakY = math.max(startPos.Y, targetPos.Y, minSafeY)
-        local waypoint = Vector3.new(midX, peakY, midZ)
+    if mode:find("Underground") or mode:find("มุดใต้ดิน") then
+        -- Underground Mode: Tunnel through ground cleanly (Y=40260 to 40285)
+        -- Completely immune to terrain collisions, player sight lines, and altitude velocity drops!
+        local undergroundY = 40275
+        local depthOffset = tonumber(State.UndergroundDepth) or 15
+        local safeTunnelY = math.min(startPos.Y, targetPos.Y) - depthOffset
+        if safeTunnelY < 40220 then safeTunnelY = 40220 end
+        if safeTunnelY > undergroundY then safeTunnelY = undergroundY end
 
-        tweenFlight(waypoint, speed)
+        if dist > 60 then
+            -- 1. Smoothly descend into underground tunnel
+            local divePos = Vector3.new(startPos.X, safeTunnelY, startPos.Z)
+            if math.abs(startPos.Y - safeTunnelY) > 5 then
+                tweenFlight(divePos, speed)
+            end
+
+            -- 2. Cruise horizontally under the map directly beneath target
+            local tunnelExit = Vector3.new(targetPos.X, safeTunnelY, targetPos.Z)
+            tweenFlight(tunnelExit, speed)
+
+            -- 3. Ascend cleanly straight to target position
+            tweenFlight(targetPos, speed)
+        else
+            tweenFlight(targetPos, speed)
+        end
+
+    elseif mode:find("Low") or mode:find("บินต่ำ") then
+        -- Low-Altitude Mode: Hug the terrain tightly without climbing to sky
         tweenFlight(targetPos, speed)
+
     else
-        tweenFlight(targetPos, speed)
+        -- High Sky Mode: Clearance at Y=40385
+        local minSafeY = 40385
+        local needElevation = (startPos.Y < minSafeY or targetPos.Y < minSafeY) and dist > 90
+
+        if needElevation then
+            local midX = (startPos.X + targetPos.X) / 2
+            local midZ = (startPos.Z + targetPos.Z) / 2
+            local peakY = math.max(startPos.Y, targetPos.Y, minSafeY)
+            local waypoint = Vector3.new(midX, peakY, midZ)
+
+            tweenFlight(waypoint, speed)
+            tweenFlight(targetPos, speed)
+        else
+            tweenFlight(targetPos, speed)
+        end
     end
     return true
 end
@@ -2848,6 +2883,28 @@ UIControls.FlySpeed = TabEgg:Slider({
     Callback = function(val) State.FlySpeed = val end
 })
 
+UIControls.FlyAltitudeMode = TabEgg:Dropdown({
+    Title = "โหมดความสูงในการบิน (Flight Altitude Mode)",
+    Values = {
+        "Underground (มุดใต้ดินล่องหน - ไม่หลุดมือ)",
+        "Low-Altitude (บินเรียบพื้นผิวต่ำ - ไม่ขึ้นฟ้า)",
+        "High Sky (บินขึ้นฟ้าหลบเนินเขาแบบเดิม)"
+    },
+    Value = State.FlyAltitudeMode,
+    Callback = function(val)
+        State.FlyAltitudeMode = val
+        if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI Flight", Content = "เปลี่ยนโหมดการบิน: " .. tostring(val) }) end
+    end
+})
+
+UIControls.UndergroundDepth = TabEgg:Slider({
+    Title = "ความลึกในการมุดใต้ดิน (Underground Depth)",
+    Description = "ระดับการมุดดิน (แนะนำ 15-20 studs มุดเนียน ไม่หลุดโลก)",
+    Step = 1,
+    Value = { Min = 5, Max = 35, Default = State.UndergroundDepth or 15 },
+    Callback = function(val) State.UndergroundDepth = val end
+})
+
 TabEgg:Section({ Title = "ระบบวางไข่ & ฟักไข่ (Auto Place Eggs & Hatching)" })
 
 UIControls.AutoPlaceEggs = TabEgg:Toggle({
@@ -4394,15 +4451,23 @@ task.spawn(function()
             isCollectingEgg = true
             local eggPart = closestEgg:FindFirstChildWhichIsA("BasePart") or closestEgg.PrimaryPart
             local eggPos = eggPart and eggPart.Position or closestEgg:GetPivot().Position
-            local targetEggPos = eggPos + Vector3.new(0, 0.5, 0)
+            local targetEggPos = eggPos + Vector3.new(0, 0.2, 0)
             local prevNoclip = State.Noclip
             State.Noclip = true
             updateNoclipConnection()
             ensureFlightHold(hrp)
 
-            -- Aerodynamic Smooth Flight to Egg (No vertical elevator detour, clears terrain without clipping!)
+            -- Fly / Tunnel to egg directly using chosen altitude mode
             local outboundSpeed = math.clamp(State.FlySpeed or 275, 80, 320)
             smoothFlyTo(targetEggPos, outboundSpeed)
+            task.wait(0.05)
+
+            -- Align character precisely to egg center to prevent distance drop
+            if hrp and eggPart then
+                pcall(function()
+                    hrp.CFrame = CFrame.new(eggPos + Vector3.new(0, 0.5, 0), eggPos)
+                end)
+            end
             task.wait(0.04)
 
             -- Single Clean Pickup Interaction (Prevents spam-drop/release glitch)
@@ -4451,7 +4516,7 @@ task.spawn(function()
                 if Remote_EggPickup and targetUuid then
                     pcall(function() Remote_EggPickup:FireServer(targetUuid) end)
                 end
-                task.wait(0.18)
+                task.wait(0.2)
                 if checkEggAcquired() then
                     pickupSuccess = true
                     break
