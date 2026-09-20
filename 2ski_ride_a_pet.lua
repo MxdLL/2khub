@@ -146,6 +146,7 @@ local Remote_PlotUpgrades    = GameRemotes and GameRemotes:FindFirstChild("Plot"
 local Remote_TeleportToPlot  = GameRemotes and GameRemotes:FindFirstChild("TeleportToPlot")
 local Remote_ClaimGroupReward = ReusableRemotes and ReusableRemotes:FindFirstChild("ClaimGroupReward")
 local Remote_ClaimEventReward = ReusableRemotes and ReusableRemotes:FindFirstChild("ClaimEventReward")
+local Remote_SkipGrowth       = GameRemotes and GameRemotes:FindFirstChild("SkipGrowth")
 
 local GamePetsData = {}
 pcall(function() GamePetsData = require(ReplicatedStorage.GameData.Pets) end)
@@ -172,10 +173,12 @@ local State = {
     TargetEggs = {},
     RarityFilter = {},
     AutoHatch = false,
+    InstantHatchEmulation = true,
     AutoBreakBaskets = false,
     EggESP = false,
     ESPMode = "All / ทั้งหมด (แสดงทุกฟอง)",
     TargetRebirthEgg = false,
+    InfiniteRadarEmulation = false,
 
     -- Tab 2: Pet Controls & Riding
     AutoMountBest = false,
@@ -642,6 +645,20 @@ local function calculatePetScore(petName, weight, age)
     local rScore = RarityScoreMap[petInfo.Rarity or "Common"] or 1
     local speed = petInfo.Speed or 50
     return (rScore * 100000) + (speed * 1000) + ((tonumber(weight) or 1) * 10) + (tonumber(age) or 1)
+end
+
+local function triggerPrompt(prompt, holdTime)
+    if not prompt or not prompt.Parent then return false end
+    pcall(function()
+        if fireproximityprompt then
+            fireproximityprompt(prompt, holdTime or 0)
+        else
+            prompt:InputHoldBegin()
+            task.wait(holdTime or (prompt.HoldDuration > 0 and prompt.HoldDuration or 0.05))
+            prompt:InputHoldEnd()
+        end
+    end)
+    return true
 end
 
 local activeFlightBv = nil
@@ -1158,6 +1175,16 @@ local function autoHatchPlotEggs()
                 isReady = true
             end
 
+            -- Instant Hatch Emulation & DirectHatch support: Fast-forward egg check
+            if State.InstantHatchEmulation and not isReady then
+                -- Try Instant Hatch fire directly: If server allows or egg reached flat growth, fire hatch
+                pcall(function()
+                    if Remote_Hatch then
+                        Remote_Hatch:FireServer({ EggKey = key })
+                    end
+                end)
+            end
+
             if isReady then
                 lastPlotFullTime = 0
                 if hp and hp:IsA("ProximityPrompt") then
@@ -1172,7 +1199,7 @@ local function autoHatchPlotEggs()
                     pcall(function() Remote_Hatch:FireServer({ EggKey = key }) end)
                 end
                 hatchedAny = true
-                task.wait(0.12)
+                task.wait(0.08)
             end
         end
     end
@@ -2880,6 +2907,72 @@ UIControls.AutoBreakBaskets = TabEgg:Toggle({
     Callback = function(val) State.AutoBreakBaskets = val end
 })
 
+TabEgg:Section({ Title = "จำลองและปลดล็อก GamePass พิเศษ (GamePass Emulation)" })
+
+UIControls.InstantHatchEmulation = TabEgg:Toggle({
+    Title = "จำลอง Instant Hatch (ฟักไข่ทันทีไม่ต้องรอหลอด)",
+    Value = State.InstantHatchEmulation,
+    Callback = function(val)
+        State.InstantHatchEmulation = val
+        if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = val and "เปิดระบบจำลอง Instant Hatch (ฟักไข่ทันที)!" or "ปิด Instant Hatch" }) end
+    end
+})
+
+UIControls.EggESP = TabEgg:Toggle({
+    Title = "จำลอง Infinite Radar (ESP ไข่ทะลุแมพ + พิกัดกิโล)",
+    Value = State.EggESP,
+    Callback = function(val)
+        State.EggESP = val
+        if not val then clearEggESP() end
+        if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = val and "เปิดระบบเรดาร์ทะลุแมพ (Infinite Radar Emulation)!" or "ปิดเรดาร์" }) end
+    end
+})
+
+UIControls.ESPMode = TabEgg:Dropdown({
+    Title = "โหมดเรดาร์ค้นหาไข่ (Radar Target Mode)",
+    Values = {
+        "All / ทั้งหมด (แสดงทุกฟอง)",
+        "Legendary+ / ระดับ Legendary ขึ้นไป",
+        "Match Selection / ตรงตามที่เลือกในระบบบิน",
+        "Rebirth Target / ไข่สำหรับ Rebirth ถัดไป"
+    },
+    Value = State.ESPMode,
+    Callback = function(val)
+        State.ESPMode = val
+    end
+})
+
+TabEgg:Button({
+    Title = "ปลดล็อกหน้าต่าง GamePass ใน Shop ให้เป็น OWNED ทั้งหมด",
+    Callback = function()
+        pcall(function()
+            local SavedData = LocalPlayer:FindFirstChild("SavedData")
+            if SavedData and SavedData:FindFirstChild("OwnedPasses") then
+                SavedData.OwnedPasses.Value = "AutoCollect,InfiniteBackpack,InfiniteRadar,InstantHatch,"
+            end
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local products = pg and pg:FindFirstChild("Main") and pg.Main:FindFirstChild("Products")
+            local gamepasses = products and products:FindFirstChild("Holder") and products.Holder:FindFirstChild("Gamepasses")
+            if gamepasses then
+                for _, pf in ipairs(gamepasses:GetChildren()) do
+                    if pf.Name == "PaddingFrame" then
+                        for _, card in ipairs(pf:GetChildren()) do
+                            if card:IsA("ImageLabel") then
+                                card.Visible = true
+                                local ownedFrame = card:FindFirstChild("Owned")
+                                local buyBtn = card:FindFirstChild(card.Name) or card:FindFirstChildWhichIsA("ImageButton")
+                                if ownedFrame then ownedFrame.Visible = true end
+                                if buyBtn then buyBtn.Visible = false end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        if _G.TwoSkiLoaded then WindUI:Notify({ Title = "2SKI", Content = "ปลดล็อก GamePass ในร้านค้าเป็น OWNED ทุกตัวเรียบร้อย!" }) end
+    end
+})
+
 -- TAB 2: ระบบสัตว์เลี้ยง (Pets & Fast Riding)
 local TabPet = Window:Tab({ Title = "ระบบสัตว์เลี้ยง", Icon = "footprints" })
 TabPet:Section({ Title = "ระบบขี่สัตว์เลี้ยงวิ่งเร็ว (Fast Pet Riding)" })
@@ -4301,16 +4394,16 @@ task.spawn(function()
             isCollectingEgg = true
             local eggPart = closestEgg:FindFirstChildWhichIsA("BasePart") or closestEgg.PrimaryPart
             local eggPos = eggPart and eggPart.Position or closestEgg:GetPivot().Position
-            local targetEggPos = eggPos + Vector3.new(0, 1.8, 0)
+            local targetEggPos = eggPos + Vector3.new(0, 0.5, 0)
             local prevNoclip = State.Noclip
             State.Noclip = true
             updateNoclipConnection()
             ensureFlightHold(hrp)
 
             -- Aerodynamic Smooth Flight to Egg (No vertical elevator detour, clears terrain without clipping!)
-            local outboundSpeed = math.clamp(State.FlySpeed or 275, 80, 340)
+            local outboundSpeed = math.clamp(State.FlySpeed or 275, 80, 320)
             smoothFlyTo(targetEggPos, outboundSpeed)
-            task.wait(0.02)
+            task.wait(0.04)
 
             -- Single Clean Pickup Interaction (Prevents spam-drop/release glitch)
             local prompt = closestEgg:FindFirstChildWhichIsA("ProximityPrompt", true)
@@ -4351,14 +4444,14 @@ task.spawn(function()
             end
 
             local pickupSuccess = false
-            for attempt = 1, 2 do
+            for attempt = 1, 3 do
                 if prompt and prompt.Enabled then
                     triggerPrompt(prompt, 0.05)
                 end
                 if Remote_EggPickup and targetUuid then
                     pcall(function() Remote_EggPickup:FireServer(targetUuid) end)
                 end
-                task.wait(0.12)
+                task.wait(0.18)
                 if checkEggAcquired() then
                     pickupSuccess = true
                     break
@@ -4383,8 +4476,8 @@ task.spawn(function()
                 local baseplate = myPlot and myPlot:FindFirstChild("Baseplate")
                 local basePos = baseplate and (baseplate.Position + Vector3.new(0, 2.8, 0)) or (getPlotCenterPos() or Vector3.new(172, 40316, 1067))
 
-                -- Safe return speed with optimal sweet spot (275-320 studs/s, fast without clipping or drop)
-                local returnSpeed = math.clamp(State.FlySpeed or 275, 80, 320)
+                -- Safe return speed with optimal sweet spot (260-290 studs/s, prevents server-side basket drop)
+                local returnSpeed = math.clamp(State.FlySpeed or 275, 80, 290)
                 smoothFlyTo(basePos, returnSpeed)
                 task.wait(0.04)
 
