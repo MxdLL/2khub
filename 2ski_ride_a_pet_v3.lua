@@ -148,6 +148,26 @@ local Remote_ClaimGroupReward = ReusableRemotes and ReusableRemotes:FindFirstChi
 local Remote_ClaimEventReward = ReusableRemotes and ReusableRemotes:FindFirstChild("ClaimEventReward")
 local Remote_SkipGrowth       = GameRemotes and GameRemotes:FindFirstChild("SkipGrowth")
 
+local NetPackage = nil
+pcall(function() NetPackage = require(ReplicatedStorage:WaitForChild("packages"):WaitForChild("Net")) end)
+local Remote_VolcanoDip = nil
+local Remote_VolcanoDipResult = nil
+local Remote_Ragdoll = nil
+pcall(function()
+    if NetPackage and NetPackage.RemoteEvent then
+        Remote_VolcanoDip = NetPackage:RemoteEvent("VolcanoDip")
+        Remote_VolcanoDipResult = NetPackage:RemoteEvent("VolcanoDipResult")
+        Remote_Ragdoll = NetPackage:RemoteEvent("Ragdoll")
+    else
+        local netFolder = ReplicatedStorage:FindFirstChild("packages") and ReplicatedStorage.packages:FindFirstChild("Net")
+        if netFolder then
+            Remote_VolcanoDip = netFolder:FindFirstChild("RE/VolcanoDip")
+            Remote_VolcanoDipResult = netFolder:FindFirstChild("RE/VolcanoDipResult")
+            Remote_Ragdoll = netFolder:FindFirstChild("RE/Ragdoll")
+        end
+    end
+end)
+
 local GamePetsData = {}
 pcall(function() GamePetsData = require(ReplicatedStorage.GameData.Pets) end)
 local GameEggsData = {}
@@ -181,6 +201,7 @@ local State = {
     ESPMode = "All / ทั้งหมด (แสดงทุกฟอง)",
     TargetRebirthEgg = false,
     InfiniteRadarEmulation = false,
+    AutoVolcanoDip = false,
 
     -- Tab 2: Pet Controls & Riding
     AutoMountBest = false,
@@ -225,6 +246,7 @@ local State = {
     ManualFly = false,
     ManualFlySpeed = 100,
     AntiAfk = false,
+    AntiRagdoll = true,
     CurrentTheme = "2SKI Cyber Cyan (ธีมหลักทางการ - ขาว ฟ้าเรืองแสง Electric Blue)",
     FloatingButtonVisible = true,
     AutoLoadConfig = false,
@@ -1029,6 +1051,108 @@ local function depositBasketToBackpack()
             task.wait(0.04)
         end
     end
+    return true
+end
+
+local function unlockVolcanoCave()
+    local v = workspace:FindFirstChild("Volcano")
+    local val = v and v:FindFirstChild("VolcanoValidate")
+    local _, hrp, _ = getCharHrp()
+    if val and hrp then
+        pcall(function()
+            if firetouchinterest then
+                firetouchinterest(hrp, val, 0)
+                task.wait(0.04)
+                firetouchinterest(hrp, val, 1)
+            else
+                local oldCf = hrp.CFrame
+                hrp.CFrame = val.CFrame
+                task.wait(0.08)
+                hrp.CFrame = oldCf
+            end
+        end)
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            WindUI:Notify({ Title = "2SKI Volcano", Content = "ปลดล็อกกำแพงถ้ำภูเขาไฟสำเร็จ!" })
+        end
+    end
+end
+
+local function dipCarriedEggToVolcano()
+    local curBasket = LocalPlayer:FindFirstChild("Basket")
+    if not curBasket or #curBasket:GetChildren() == 0 then
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            WindUI:Notify({ Title = "2SKI Volcano", Content = "คุณไม่ได้ถือไข่อยู่ในตะกร้า!" })
+        end
+        return false
+    end
+
+    local eggInBasket = curBasket:GetChildren()[1]
+    if eggInBasket and eggInBasket:GetAttribute("VolcanoDipped") == true then
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            WindUI:Notify({ Title = "2SKI Volcano", Content = "ไข่ฟองนี้เคยผ่านการชุบลาวาภูเขาไฟแล้ว!" })
+        end
+        return false
+    end
+
+    local char, hrp, hum = getCharHrp()
+    if not hrp then return false end
+
+    -- Fly to VolcanoTop
+    local volcanoTopPos = Vector3.new(-5102.84, 41410.0, -3489.11)
+    local prevNoclip = State.Noclip
+    State.Noclip = true
+    updateNoclipConnection()
+    ensureFlightHold(hrp)
+
+    if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+        WindUI:Notify({ Title = "2SKI Volcano", Content = "กำลังบินพาไข่ไปชุบลาวาที่ปล่องภูเขาไฟ..." })
+    end
+
+    local flySpeed = math.clamp(State.FlySpeed or 275, 100, 300)
+    smoothFlyTo(volcanoTopPos, flySpeed)
+    task.wait(0.1)
+
+    -- Align directly over VolcanoTop
+    if hrp then
+        hrp.CFrame = CFrame.new(volcanoTopPos)
+    end
+    task.wait(0.1)
+
+    if Remote_VolcanoDip then
+        pcall(function() Remote_VolcanoDip:FireServer() end)
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            WindUI:Notify({ Title = "2SKI Volcano", Content = "จุ่มไข่ลงสู่ลาวาแล้ว! กำลังรอผลลัพธ์การกลายพันธุ์..." })
+        end
+
+        local t0 = tick()
+        while tick() - t0 < 10 do
+            task.wait(0.5)
+            if not curBasket or #curBasket:GetChildren() == 0 then break end
+            local egg = curBasket:GetChildren()[1]
+            if egg and egg:GetAttribute("VolcanoDipped") == true then
+                break
+            end
+            local serverTime = workspace:GetServerTimeNow()
+            local vUntil = egg and egg:GetAttribute("VolcanoUntil")
+            if vUntil and type(vUntil) == "number" and serverTime >= vUntil then
+                break
+            end
+        end
+
+        local eggAfter = curBasket and curBasket:GetChildren()[1]
+        local isMagma = eggAfter and (eggAfter:GetAttribute("Mutation") == "Magma" or eggAfter:GetAttribute("Magma") == true)
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            if isMagma then
+                WindUI:Notify({ Title = "2SKI Volcano 🔥", Content = "สำเร็จ! ได้รับการกลายพันธุ์ Magma (ลาวา) เรียบร้อย!" })
+            else
+                WindUI:Notify({ Title = "2SKI Volcano", Content = "กระบวนการชุบลาวาเสร็จสิ้น!" })
+            end
+        end
+    end
+
+    State.Noclip = prevNoclip
+    updateNoclipConnection()
+    releaseFlightHold()
     return true
 end
 
@@ -3030,6 +3154,32 @@ TabEgg:Button({
     end
 })
 
+TabEgg:Section({ Title = "🌋 ระบบชุบไข่ลาวาภูเขาไฟ (Volcano Magma Mutation)" })
+
+UIControls.AutoVolcanoDip = TabEgg:Toggle({
+    Title = "ออโต้จุ่มไข่ในภูเขาไฟ (Auto Dip Egg - Magma Mutation)",
+    Description = "เมื่อบินเก็บไข่ จะบินพาไปจุ่มลาวาที่ปากปล่องภูเขาไฟ เพื่อลุ้นกลายพันธุ์ Magma (โอกาส 15%) ก่อนนำกลับมาวางรัง!",
+    Value = State.AutoVolcanoDip,
+    Callback = function(val)
+        State.AutoVolcanoDip = val
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "2SKI Volcano",
+                Content = val and "เปิดระบบออโต้จุ่มไข่ภูเขาไฟ (Magma Mutation)!" or "ปิดระบบออโต้จุ่มไข่ภูเขาไฟ"
+            })
+        end
+    end
+})
+
+TabEgg:Button({
+    Title = "บินพาไข่ที่ถืออยู่ไปจุ่มลาวาทันที (Dip Carried Egg to Volcano Now)",
+    Callback = function()
+        task.spawn(function()
+            dipCarriedEggToVolcano()
+        end)
+    end
+})
+
 -- TAB 2: ระบบสัตว์เลี้ยง (Pets & Fast Riding)
 local TabPet = Window:Tab({ Title = "ระบบสัตว์เลี้ยง", Icon = "footprints" })
 TabPet:Section({ Title = "ระบบขี่สัตว์เลี้ยงวิ่งเร็ว (Fast Pet Riding)" })
@@ -3113,7 +3263,7 @@ TabPet:Button({
 
 UIControls.TargetPet = TabPet:Dropdown({
     Title = "เลือกชนิดสัตว์เลี้ยง (Target Pet Filter)",
-    Values = {"Unicorn (Divine)", "TRex (Divine)", "Phoenix (Divine)", "Dragon (Ethereal)", "Kitsune (Ethereal)", "Fox (Mythic)", "Giraffe (Mythic)"},
+    Values = {"Volkaris (Ethereal)", "Unicorn (Divine)", "TRex (Divine)", "Phoenix (Divine)", "Dragon (Ethereal)", "Kitsune (Ethereal)", "Fox (Mythic)", "Giraffe (Mythic)"},
     Value = State.TargetPet,
     Callback = function(val) State.TargetPet = val end
 })
@@ -3551,7 +3701,53 @@ TabTP:Button({
     end
 })
 
+TabTP:Section({ Title = "🌋 เกาะภูเขาไฟ (Volcano Island & Volkaris)" })
 
+TabTP:Button({
+    Title = "วาร์ปไปปากปล่องภูเขาไฟ (Volcano Top / Magma Pit)",
+    Callback = function()
+        local _, hrp, _ = getCharHrp()
+        if hrp then
+            hrp.CFrame = CFrame.new(-5102.84, 41410.0, -3489.11)
+            if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+                WindUI:Notify({ Title = "2SKI Volcano", Content = "วาร์ปมายังปากปล่องภูเขาไฟแล้ว!" })
+            end
+        end
+    end
+})
+
+TabTP:Button({
+    Title = "วาร์ปไปรังมังกรการ์เดียน (Volkaris Lair / Volcanic Egg)",
+    Callback = function()
+        local _, hrp, _ = getCharHrp()
+        if hrp then
+            hrp.CFrame = CFrame.new(-5329.45, 40915.0, -3580.87)
+            if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+                WindUI:Notify({ Title = "2SKI Volcano", Content = "วาร์ปมายังรังมังกร Volkaris แล้ว!" })
+            end
+        end
+    end
+})
+
+TabTP:Button({
+    Title = "วาร์ปไปหน้าทางเข้าภูเขาไฟ (Volcano Entrance)",
+    Callback = function()
+        local _, hrp, _ = getCharHrp()
+        if hrp then
+            hrp.CFrame = CFrame.new(-4939.84, 41285.0, -3679.98)
+            if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+                WindUI:Notify({ Title = "2SKI Volcano", Content = "วาร์ปมาหน้าทางเข้าภูเขาไฟแล้ว!" })
+            end
+        end
+    end
+})
+
+TabTP:Button({
+    Title = "ปลดล็อกกำแพงถ้ำภูเขาไฟ (Unlock Volcano Validate)",
+    Callback = function()
+        unlockVolcanoCave()
+    end
+})
 
 -- TAB 6: รีเบิร์ธ & สถิติ
 local TabRebirth = Window:Tab({ Title = "เกิดใหม่ & สถิติ", Icon = "flame" })
@@ -3681,6 +3877,21 @@ UIControls.InfiniteJump = TabSettings:Toggle({
     Title = "กระโดดไร้ขีดจำกัด (Infinite Jump)",
     Value = State.InfiniteJump,
     Callback = function(val) State.InfiniteJump = val end
+})
+
+UIControls.AntiRagdoll = TabSettings:Toggle({
+    Title = "ป้องกันตัวละครล้ม / กระเด็น (Anti-Ragdoll & Knockback)",
+    Description = "ป้องกันลูกไฟมังกร Volkaris และดาเมจไม่ให้ตัวละครล้มหรือกระเด็นตกแมพ",
+    Value = State.AntiRagdoll,
+    Callback = function(val)
+        State.AntiRagdoll = val
+        if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
+            WindUI:Notify({
+                Title = "2SKI Combat",
+                Content = val and "เปิดใช้งาน Anti-Ragdoll / ป้องกันกระเด็น!" or "ปิดใช้งาน Anti-Ragdoll"
+            })
+        end
+    end
 })
 
 local hookedHumanoids = {}
@@ -4537,6 +4748,15 @@ task.spawn(function()
 
             -- Return Flight back to baseplate (safe speed to prevent server speed-check from dropping egg!)
             if hasBasketEgg or hasHeldEgg or pickupSuccess then
+                -- Volcano Auto Dip: if enabled, fly to VolcanoTop and dip egg into volcano first!
+                if State.AutoVolcanoDip and basket and #basket:GetChildren() > 0 then
+                    local bEgg = basket:GetChildren()[1]
+                    if bEgg and bEgg:GetAttribute("VolcanoDipped") ~= true then
+                        pcall(dipCarriedEggToVolcano)
+                        task.wait(0.05)
+                    end
+                end
+
                 local myPlot = getMyPlot()
                 local baseplate = myPlot and myPlot:FindFirstChild("Baseplate")
                 local basePos = baseplate and (baseplate.Position + Vector3.new(0, 2.8, 0)) or (getPlotCenterPos() or Vector3.new(172, 40316, 1067))
@@ -4678,8 +4898,35 @@ task.spawn(function()
     end
 end)
 
+-- Anti-Ragdoll & Anti-Knockback Guardian (Cancels Volkaris Fireball knockback & ragdoll states)
+task.spawn(function()
+    while _G.TwoSkiRunning and _G.TwoSkiActiveToken == myToken do
+        if State.AntiRagdoll then
+            pcall(function()
+                local _, hrp, hum = getCharHrp()
+                if hum then
+                    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+                    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+                    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+                    local curState = hum:GetState()
+                    if curState == Enum.HumanoidStateType.Physics or curState == Enum.HumanoidStateType.Ragdoll or curState == Enum.HumanoidStateType.FallingDown then
+                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                        if hrp then
+                            hrp.AssemblyLinearVelocity = Vector3.zero
+                            hrp.AssemblyAngularVelocity = Vector3.zero
+                        end
+                    end
+                end
+            end)
+            task.wait(0.15)
+        else
+            task.wait(1.5)
+        end
+    end
+end)
+
 _G.TwoSkiLoaded = true
-_G.TwoSkiVersion = "v3.2.1 [SMOOTH-PHYSICS]"
+_G.TwoSkiVersion = "v3.3.0 [VOLCANO-UPDATE]"
 -- Initialize UI & Settings
 pcall(function() if Window and Window.SelectTab then Window:SelectTab(1) end end)
 applyThemePreset(State.CurrentTheme)
@@ -4695,9 +4942,9 @@ end)
 pcall(function()
     if WindUI and WindUI.Notify then
         WindUI:Notify({
-            Title = "2SKI Master Edition v3.2.1",
-            Content = isMobile and "โหมดมือถือ & iOS พร้อมใช้งาน! ลื่นไหล 0% แตะหรือลากปุ่ม 2SKI ได้ทันที" or "ธีม 2SKI Cyber Cyan พร้อมใช้งาน! กด Left Ctrl หรือคลิกปุ่มลอย 2SKI เพื่อเปิด/ปิด"
+            Title = "2SKI Master Edition v3.3.0 🌋",
+            Content = "อัพเดทแพตช์ภูเขาไฟ (Volcano & Magma) สำเร็จ! พร้อมระบบชุบไข่ลาวา และ Anti-Ragdoll ป้องกันมังกร Volkaris"
         })
     end
 end)
-print("[2SKI] Master Edition v3.2.1 successfully loaded.")
+print("[2SKI] Master Edition v3.3.0 [VOLCANO-UPDATE] successfully loaded.")
