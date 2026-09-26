@@ -148,25 +148,15 @@ local Remote_ClaimGroupReward = ReusableRemotes and ReusableRemotes:FindFirstChi
 local Remote_ClaimEventReward = ReusableRemotes and ReusableRemotes:FindFirstChild("ClaimEventReward")
 local Remote_SkipGrowth       = GameRemotes and GameRemotes:FindFirstChild("SkipGrowth")
 
-local NetPackage = nil
-pcall(function() NetPackage = require(ReplicatedStorage:WaitForChild("packages"):WaitForChild("Net")) end)
-local Remote_VolcanoDip = nil
-local Remote_VolcanoDipResult = nil
-local Remote_Ragdoll = nil
-pcall(function()
-    if NetPackage and NetPackage.RemoteEvent then
-        Remote_VolcanoDip = NetPackage:RemoteEvent("VolcanoDip")
-        Remote_VolcanoDipResult = NetPackage:RemoteEvent("VolcanoDipResult")
-        Remote_Ragdoll = NetPackage:RemoteEvent("Ragdoll")
-    else
-        local netFolder = ReplicatedStorage:FindFirstChild("packages") and ReplicatedStorage.packages:FindFirstChild("Net")
-        if netFolder then
-            Remote_VolcanoDip = netFolder:FindFirstChild("RE/VolcanoDip")
-            Remote_VolcanoDipResult = netFolder:FindFirstChild("RE/VolcanoDipResult")
-            Remote_Ragdoll = netFolder:FindFirstChild("RE/Ragdoll")
-        end
+local function getNetRemote(name)
+    local ok, netPkg = pcall(function() return require(ReplicatedStorage:WaitForChild("packages"):WaitForChild("Net")) end)
+    if ok and netPkg and netPkg.RemoteEvent then
+        local ok2, r = pcall(function() return netPkg:RemoteEvent(name) end)
+        if ok2 and r then return r end
     end
-end)
+    local netFolder = ReplicatedStorage:FindFirstChild("packages") and ReplicatedStorage.packages:FindFirstChild("Net")
+    return netFolder and netFolder:FindFirstChild("RE/" .. name)
+end
 
 local GamePetsData = {}
 pcall(function() GamePetsData = require(ReplicatedStorage.GameData.Pets) end)
@@ -1118,8 +1108,9 @@ local function dipCarriedEggToVolcano()
     end
     task.wait(0.1)
 
-    if Remote_VolcanoDip then
-        pcall(function() Remote_VolcanoDip:FireServer() end)
+    local remDip = getNetRemote("VolcanoDip")
+    if remDip then
+        pcall(function() remDip:FireServer() end)
         if _G.TwoSkiLoaded and WindUI and WindUI.Notify then
             WindUI:Notify({ Title = "2SKI Volcano", Content = "จุ่มไข่ลงสู่ลาวาแล้ว! กำลังรอผลลัพธ์การกลายพันธุ์..." })
         end
@@ -2445,19 +2436,17 @@ local function loadConfig(silent)
     return false
 end
 
--- Rebirth Pet & Egg Targeter Maps
-local RebirthBestEggsMap = {
-    ["Horse"] = { "Leaf Egg", "Stone Egg", "Easter Egg", "Cracked Egg", "Mushroom Egg", "Ice Egg" },
-    ["Fox"] = { "Golden Egg", "Diamond Egg", "Crystal Egg", "Flaming Egg", "Asteroid Egg", "Dominus Egg", "Soul Egg", "Galaxy Egg", "Aurora Egg" },
-    ["Unicorn"] = { "Aurora Egg", "Galaxy Egg", "Blackhole Egg", "Solaris Egg", "Cherub Egg" },
-    ["Phoenix"] = { "Galaxy Egg", "Aurora Egg", "Blackhole Egg", "Solaris Egg", "Cherub Egg" },
-    ["Kitsune"] = { "Solaris Egg", "Blackhole Egg", "Cherub Egg", "Galaxy Egg" },
-    ["Dragon"] = { "Dragon Egg", "Solaris Egg", "Blackhole Egg", "Cherub Egg", "Galaxy Egg" }
-}
-
 local function getBestEggsForRebirthPet(petName)
     if not petName then return {} end
-    return RebirthBestEggsMap[petName] or { "Solaris Egg", "Blackhole Egg", "Cherub Egg", "Galaxy Egg", "Aurora Egg" }
+    local map = {
+        ["Horse"] = { "Leaf Egg", "Stone Egg", "Easter Egg", "Cracked Egg", "Mushroom Egg", "Ice Egg" },
+        ["Fox"] = { "Golden Egg", "Diamond Egg", "Crystal Egg", "Flaming Egg", "Asteroid Egg", "Dominus Egg", "Soul Egg", "Galaxy Egg", "Aurora Egg" },
+        ["Unicorn"] = { "Aurora Egg", "Galaxy Egg", "Blackhole Egg", "Solaris Egg", "Cherub Egg" },
+        ["Phoenix"] = { "Galaxy Egg", "Aurora Egg", "Blackhole Egg", "Solaris Egg", "Cherub Egg" },
+        ["Kitsune"] = { "Solaris Egg", "Blackhole Egg", "Cherub Egg", "Galaxy Egg" },
+        ["Dragon"] = { "Dragon Egg", "Solaris Egg", "Blackhole Egg", "Cherub Egg", "Galaxy Egg" }
+    }
+    return map[petName] or { "Solaris Egg", "Blackhole Egg", "Cherub Egg", "Galaxy Egg", "Aurora Egg" }
 end
 
 local function isEggGoodForRebirthPet(eggName, petName)
@@ -2731,17 +2720,6 @@ if not ESPFolder then
 end
 
 local activeESPBoxes = {}
-local RarityColors = {
-    Common = Color3.fromRGB(180, 180, 180),
-    Uncommon = Color3.fromRGB(80, 220, 100),
-    Rare = Color3.fromRGB(50, 150, 255),
-    Epic = Color3.fromRGB(180, 70, 255),
-    Legendary = Color3.fromRGB(255, 170, 0),
-    Mythic = Color3.fromRGB(255, 60, 60),
-    Divine = Color3.fromRGB(0, 240, 255),
-    Ethereal = Color3.fromRGB(255, 105, 180)
-}
-
 local function clearEggESP()
     for egg, esp in pairs(activeESPBoxes) do
         pcall(function()
@@ -2755,6 +2733,16 @@ local function clearEggESP()
 end
 
 local function updateEggESP()
+    local RarityColors = {
+        Common = Color3.fromRGB(180, 180, 180),
+        Uncommon = Color3.fromRGB(80, 220, 100),
+        Rare = Color3.fromRGB(50, 150, 255),
+        Epic = Color3.fromRGB(180, 70, 255),
+        Legendary = Color3.fromRGB(255, 170, 0),
+        Mythic = Color3.fromRGB(255, 60, 60),
+        Divine = Color3.fromRGB(0, 240, 255),
+        Ethereal = Color3.fromRGB(255, 105, 180)
+    }
     if not State.EggESP then
         clearEggESP()
         return
@@ -3574,12 +3562,13 @@ end
 
 -- TAB 5: วาร์ป & เซิร์ฟเวอร์
 local TabTP = Window:Tab({ Title = "วาร์ป & เซิร์ฟเวอร์", Icon = "compass" })
-TabTP:Section({ Title = "ระบบค้นหา & ย้ายเซิร์ฟเวอร์ (Server Browser)" })
+do
+    TabTP:Section({ Title = "ระบบค้นหา & ย้ายเซิร์ฟเวอร์ (Server Browser)" })
 
-local serverLabels = { "กดรีเฟรชเพื่อโหลดรายชื่อเซิร์ฟ..." }
-local selectedServerId = nil
+    local serverLabels = { "กดรีเฟรชเพื่อโหลดรายชื่อเซิร์ฟ..." }
+    local selectedServerId = nil
 
-UIControls.SelectedServer = TabTP:Dropdown({
+    UIControls.SelectedServer = TabTP:Dropdown({
     Title = "เลือกเซิร์ฟเวอร์ปลายทาง (Server List)",
     Values = serverLabels,
     Value = serverLabels[1],
@@ -3627,6 +3616,7 @@ TabTP:Button({
         rejoinSameServer()
     end
 })
+end
 
 TabTP:Section({ Title = "วาร์ปสถานที่สำคัญ (Quick Teleports)" })
 
