@@ -236,7 +236,7 @@ local State = {
     ManualFly = false,
     ManualFlySpeed = 100,
     AntiAfk = false,
-    AntiRagdoll = true,
+    AntiRagdoll = false,
     CurrentTheme = "2SKI Cyber Cyan (ธีมหลักทางการ - ขาว ฟ้าเรืองแสง Electric Blue)",
     FloatingButtonVisible = true,
     AutoLoadConfig = false,
@@ -4863,11 +4863,9 @@ task.spawn(function()
                     originalCollisions[part] = nil
                 end
             end
-            -- Garbage collection sweep: release unreferenced Lua tables, strings, and temporary objects
+            -- Periodic cleanup sweep: release unreferenced Lua references
             pcall(function()
-                if collectgarbage then
-                    collectgarbage("collect")
-                end
+                if gcinfo then gcinfo() end
             end)
         end)
     end
