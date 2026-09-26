@@ -1978,49 +1978,31 @@ regTheme("Amber",   "#FFB700", "#2A200E", "#3E2D12", "#5C451D", "#3B2D14", "#4C3
 regTheme("Blue",    "#3D8EFF", "#14223B", "#1C3054", "#2C497E", "#1C3054", "#253F6D")
 
 -- Create Original 2SKI Window (Glassy Tiffany + macOS 3 Colored Dots + Responsive Mobile)
-local cam = workspace.CurrentCamera
-local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
-local winWidth = isMobile and math.clamp(math.floor(vp.X * 0.88), 360, 560) or 580
-local winHeight = isMobile and math.clamp(math.floor(vp.Y * 0.82), 275, 430) or 460
-local minW = isMobile and math.clamp(math.floor(vp.X * 0.68), 290, 440) or 480
-local minH = isMobile and math.clamp(math.floor(vp.Y * 0.60), 220, 310) or 320
+local Window = nil
+do
+    local cam = workspace.CurrentCamera
+    local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+    local winWidth = isMobile and math.clamp(math.floor(vp.X * 0.88), 360, 560) or 580
+    local winHeight = isMobile and math.clamp(math.floor(vp.Y * 0.82), 275, 430) or 460
+    local minW = isMobile and math.clamp(math.floor(vp.X * 0.68), 290, 440) or 480
+    local minH = isMobile and math.clamp(math.floor(vp.Y * 0.60), 220, 310) or 320
 
--- 2SKI Custom Official Logo (Cloud CDN Cached Asset)
-local TwoSkiLogoAsset = nil
-local function get2SkiLogoAsset()
-    local getAsset = getcustomasset or getsynasset
-    local fileName = "2ski_official_logo.png"
-    if writefile and getAsset then
-        local ok, asset = pcall(function()
-            if not (isfile and isfile(fileName)) then
-                local content = game:HttpGet("https://files.catbox.moe/jrwfti.png")
-                if content and #content > 0 then
-                    writefile(fileName, content)
-                end
-            end
-            return getAsset(fileName)
-        end)
-        if ok and asset then return asset end
-    end
-    return nil
+    Window = WindUI:CreateWindow({
+        Title = "2SKI",
+        SubTitle = "ขี่สัตว์เลี้ยง (Ride a Pet) v3.3.0",
+        Folder = "2ski_ride_a_pet",
+        Theme = "Sky",
+        Transparent = false,
+        SideBarWidth = isMobile and 140 or 195,
+        HasOutline = true,
+        Keybind = Enum.KeyCode.LeftControl,
+        Size = UDim2.fromOffset(winWidth, winHeight),
+        MinSize = Vector2.new(minW, minH),
+        OpenButton = { Enabled = false, Draggable = false, OnlyMobile = false },
+        User = { Enabled = true, Anonymous = false },
+        Topbar = { Height = isMobile and 40 or 44, ButtonsType = "Mac" }
+    })
 end
-TwoSkiLogoAsset = get2SkiLogoAsset()
-
-local Window = WindUI:CreateWindow({
-    Title = "2SKI",
-    SubTitle = "ขี่สัตว์เลี้ยง (Ride a Pet) v3.2.1",
-    Folder = "2ski_ride_a_pet",
-    Theme = "Sky",
-    Transparent = false,
-    SideBarWidth = isMobile and 140 or 195,
-    HasOutline = true,
-    Keybind = Enum.KeyCode.LeftControl,
-    Size = UDim2.fromOffset(winWidth, winHeight),
-    MinSize = Vector2.new(minW, minH),
-    OpenButton = { Enabled = false, Draggable = false, OnlyMobile = false },
-    User = { Enabled = true, Anonymous = false },
-    Topbar = { Height = isMobile and 40 or 44, ButtonsType = "Mac" }
-})
 _G.TwoSkiWindow = Window
 
 -- Window Display Order Fixer
@@ -2075,9 +2057,11 @@ local ThemePresets = {
 }
 
 -- Floating Rotating Squircle Toggle Button (Multi-Layer Neon Light Engine)
-local GuiParent = getSafeGuiContainer() or (LocalPlayer and LocalPlayer:WaitForChild("PlayerGui", 10))
-local ToggleGui = Instance.new("ScreenGui")
-ToggleGui.Name = "TwoSki_RideAPet_Floating"
+local ToggleGui = nil
+do
+    local GuiParent = getSafeGuiContainer() or (LocalPlayer and LocalPlayer:WaitForChild("PlayerGui", 10))
+    ToggleGui = Instance.new("ScreenGui")
+    ToggleGui.Name = "TwoSki_RideAPet_Floating"
 ToggleGui.ResetOnSpawn = false
 ToggleGui.DisplayOrder = 999999
 ToggleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -2371,6 +2355,7 @@ local keybindCon = UserInputService.InputBegan:Connect(function(input, gameProce
     end
 end)
 table.insert(Connections, keybindCon)
+end
 
 -- Config Manager
 local CONFIG_FILE = "2SKI_RideAPet_Config.json"
